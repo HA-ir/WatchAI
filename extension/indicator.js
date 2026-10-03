@@ -2,7 +2,7 @@ import GObject from 'gi://GObject';
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
-import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
+import { WatchAISessionPopover } from './popover.js';
 
 const STATE_CONFIG = {
     IDLE: {
@@ -74,8 +74,15 @@ class WatchAIIndicator extends PanelMenu.Button {
         this._box.add_child(this._countLabel);
         this.add_child(this._box);
 
+        // Attach session inspection popover to button menu
+        this._popover = new WatchAISessionPopover(this.menu);
+
         this._currentState = 'IDLE';
         this.updateState('IDLE', 0, 0, 0);
+    }
+
+    get popover() {
+        return this._popover;
     }
 
     updateState(state, activeCount = 0, waitingCount = 0, errorCount = 0) {
@@ -106,5 +113,16 @@ class WatchAIIndicator extends PanelMenu.Button {
         this.updateState('IDLE', 0, 0, 0);
         this._icon.style_class = 'system-status-icon watchai-status-icon watchai-state-idle';
         this.set_accessible_name('WatchAI: Daemon offline');
+        if (this._popover) {
+            this._popover.setSessions([]);
+        }
+    }
+
+    destroy() {
+        if (this._popover) {
+            this._popover.destroy();
+            this._popover = null;
+        }
+        super.destroy();
     }
 });

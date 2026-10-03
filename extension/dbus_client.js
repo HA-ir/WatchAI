@@ -48,6 +48,9 @@ export class WatchAIDbusClient {
         this._callbacks = callbacks;
         this._proxy = null;
         this._signalId = null;
+        this._sessionAddedId = null;
+        this._sessionUpdatedId = null;
+        this._sessionRemovedId = null;
         this._ownerChangedId = null;
         this._reconnectTimer = null;
         this._isDestroyed = false;
@@ -104,11 +107,46 @@ export class WatchAIDbusClient {
             }
         });
 
+        // Listen for SessionAdded signal
+        this._sessionAddedId = this._proxy.connectSignal('SessionAdded', (_proxy, _sender, params) => {
+            if (this._callbacks.onSessionAdded && params[0]) {
+                this._callbacks.onSessionAdded(this._unpackSession(params[0]));
+            }
+        });
+
+        // Listen for SessionUpdated signal
+        this._sessionUpdatedId = this._proxy.connectSignal('SessionUpdated', (_proxy, _sender, params) => {
+            if (this._callbacks.onSessionUpdated && params[0]) {
+                this._callbacks.onSessionUpdated(this._unpackSession(params[0]));
+            }
+        });
+
+        // Listen for SessionRemoved signal
+        this._sessionRemovedId = this._proxy.connectSignal('SessionRemoved', (_proxy, _sender, params) => {
+            if (this._callbacks.onSessionRemoved && params[0]) {
+                this._callbacks.onSessionRemoved(params[0]);
+            }
+        });
+
         // Initial fetch
         this.fetchAggregateState();
         if (this._callbacks.onConnected) {
             this._callbacks.onConnected();
         }
+    }
+
+    _unpackSession(s) {
+        return {
+            sessionId: s[0],
+            providerId: s[1],
+            providerDisplayName: s[2],
+            projectName: s[3],
+            currentState: s[4],
+            startedAt: s[5],
+            stateEnteredAt: s[6],
+            processId: s[7],
+            activeToolCategory: s[8],
+        };
     }
 
     _handleDisconnect() {
@@ -144,6 +182,23 @@ export class WatchAIDbusClient {
         });
     }
 
+    fetchSessions(callback) {
+        if (!this._proxy || !this._proxy.g_name_owner) {
+            if (callback) callback([]);
+            return;
+        }
+
+        this._proxy.GetSessionsRemote((result, error) => {
+            if (error) {
+                if (callback) callback([]);
+                return;
+            }
+            const rawSessions = result[0] || [];
+            const sessions = rawSessions.map(s => this._unpackSession(s));
+            if (callback) callback(sessions);
+        });
+    }
+
     destroy() {
         this._isDestroyed = true;
         if (this._reconnectTimer) {
@@ -155,6 +210,18 @@ export class WatchAIDbusClient {
             if (this._signalId) {
                 this._proxy.disconnectSignal(this._signalId);
                 this._signalId = null;
+            }
+            if (this._sessionAddedId) {
+                this._proxy.disconnectSignal(this._sessionAddedId);
+                this._sessionAddedId = null;
+            }
+            if (this._sessionUpdatedId) {
+                this._proxy.disconnectSignal(this._sessionUpdatedId);
+                this._sessionUpdatedId = null;
+            }
+            if (this._sessionRemovedId) {
+                this._proxy.disconnectSignal(this._sessionRemovedId);
+                this._sessionRemovedId = null;
             }
             if (this._ownerChangedId) {
                 this._proxy.disconnect(this._ownerChangedId);
