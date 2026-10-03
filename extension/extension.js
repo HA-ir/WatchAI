@@ -9,7 +9,14 @@ export default class WatchAIExtension extends Extension {
 
         this._dbusClient = new WatchAIDbusClient({
             onConnected: () => {
-                // Daemon connected
+                // Fetch full session list on connection/reconnection
+                if (this._dbusClient && this._indicator) {
+                    this._dbusClient.fetchSessions((sessions) => {
+                        if (this._indicator && this._indicator.popover) {
+                            this._indicator.popover.setSessions(sessions);
+                        }
+                    });
+                }
             },
             onDisconnected: () => {
                 if (this._indicator) {
@@ -24,6 +31,21 @@ export default class WatchAIExtension extends Extension {
                         agg.waitingCount,
                         agg.errorCount
                     );
+                }
+            },
+            onSessionAdded: (session) => {
+                if (this._indicator && this._indicator.popover) {
+                    this._indicator.popover.addSession(session);
+                }
+            },
+            onSessionUpdated: (session) => {
+                if (this._indicator && this._indicator.popover) {
+                    this._indicator.popover.updateSession(session);
+                }
+            },
+            onSessionRemoved: (sessionId) => {
+                if (this._indicator && this._indicator.popover) {
+                    this._indicator.popover.removeSession(sessionId);
                 }
             },
         });

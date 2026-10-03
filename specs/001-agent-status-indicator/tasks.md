@@ -90,16 +90,16 @@ description: "Actionable implementation task breakdown for WatchAI Baseline Agen
 **Independent Test**: Run two agent sessions, open the popover menu, and verify accurate display of provider names, project folder basenames, live duration counters, and terminal PIDs.
 
 ### Tests for User Story 2
-- [ ] T029 [P] [US2] Write unit test for `GetSessions` response serialization with active and completed sessions in `crates/watchai-ipc/tests/session_list_tests.rs`.
-- [ ] T030 [P] [US2] Write GJS test verifying popover card insertion, state badge updates, and empty state rendering in `extension/tests/test_popover.js`.
+- [x] T029 [P] [US2] Write unit test for `GetSessions` response serialization with active and completed sessions in `crates/watchai-ipc/tests/session_list_tests.rs`.
+- [x] T030 [P] [US2] Write GJS test verifying popover card insertion, state badge updates, and empty state rendering in `extension/tests/test_popover.js`.
 
 ### Implementation for User Story 2
-- [ ] T031 [US2] Implement session collection query and struct packing in daemon D-Bus service in `crates/watchai-ipc/src/dbus_service.rs`.
-- [ ] T032 [US2] Implement session card UI widget (`PopupMenu.PopupMenuSection`) rendering provider badge, project name, duration, and state in `extension/popover.js`.
-- [ ] T033 [US2] Implement active duration timer updating session card elapsed time every second in `extension/popover.js`.
-- [ ] T034 [US2] Implement visual highlighting and prominent sorting for sessions in `WAITING` or `ERROR` in `extension/popover.js`.
-- [ ] T035 [US2] Implement informative empty state UI when zero sessions are active in `extension/popover.js`.
-- [ ] T036 [US2] Connect `SessionAdded`, `SessionUpdated`, and `SessionRemoved` D-Bus signals to dynamically mutate popover cards without closing the menu in `extension/popover.js`.
+- [x] T031 [US2] Implement session collection query and struct packing in daemon D-Bus service in `crates/watchai-ipc/src/dbus_service.rs`.
+- [x] T032 [US2] Implement session card UI widget (`PopupMenu.PopupMenuSection`) rendering provider badge, project name, duration, and state in `extension/popover.js`.
+- [x] T033 [US2] Implement active duration timer updating session card elapsed time every second in `extension/popover.js`.
+- [x] T034 [US2] Implement visual highlighting and prominent sorting for sessions in `WAITING` or `ERROR` in `extension/popover.js`.
+- [x] T035 [US2] Implement informative empty state UI when zero sessions are active in `extension/popover.js`.
+- [x] T036 [US2] Connect `SessionAdded`, `SessionUpdated`, and `SessionRemoved` D-Bus signals to dynamically mutate popover cards without closing the menu in `extension/popover.js`.
 
 **Checkpoint**: User Story 2 is complete; sessions can be inspected individually in the GNOME panel.
 
