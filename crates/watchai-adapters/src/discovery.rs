@@ -16,11 +16,29 @@ impl ProcessScanner {
         provider_id: &'static str,
         provider_display_name: &'static str,
     ) -> Vec<DiscoveredSession> {
+        Self::scan_proc_dir(
+            Path::new("/proc"),
+            binary_name,
+            provider_id,
+            provider_display_name,
+        )
+    }
+
+    /// Scan a specified proc root directory for matching agent processes.
+    ///
+    /// Isolates per-process I/O errors so that unreadable, locked, or rapidly
+    /// disappearing processes do not abort discovery for sibling processes.
+    pub fn scan_proc_dir(
+        proc_root: &Path,
+        binary_name: &str,
+        provider_id: &'static str,
+        provider_display_name: &'static str,
+    ) -> Vec<DiscoveredSession> {
         let mut results = Vec::new();
-        let proc_dir = match fs::read_dir("/proc") {
+        let proc_dir = match fs::read_dir(proc_root) {
             Ok(d) => d,
             Err(e) => {
-                debug!("Failed to read /proc directory: {}", e);
+                debug!("Failed to read proc directory '{:?}': {}", proc_root, e);
                 return results;
             }
         };
@@ -32,7 +50,7 @@ impl ProcessScanner {
                 None => continue,
             };
 
-            // Only examine numeric directory names (PIDs)
+            // Only examine numeric directory names (PIDs); skip named pseudo-dirs like /proc/sys
             let pid: u32 = match pid_str.parse() {
                 Ok(p) => p,
                 Err(_) => continue,
@@ -44,7 +62,10 @@ impl ProcessScanner {
             // Read /proc/[pid]/cmdline (null-delimited arguments)
             let cmdline_bytes = match fs::read(&cmdline_path) {
                 Ok(b) => b,
-                Err(_) => continue, // Process may have exited or permissions denied
+                Err(e) => {
+                    debug!("Skipping PID {}: cannot read cmdline: {}", pid, e);
+                    continue; // Process may have exited or permissions denied
+                }
             };
 
             let cmdline = String::from_utf8_lossy(&cmdline_bytes);
@@ -56,7 +77,13 @@ impl ProcessScanner {
             let cwd_path = proc_path.join("cwd");
             let project_path = match fs::read_link(&cwd_path) {
                 Ok(target) => target,
-                Err(_) => PathBuf::from("/unknown/workspace"),
+                Err(e) => {
+                    debug!(
+                        "Cwd symlink unreadable for PID {}: {}. Falling back to default workspace.",
+                        pid, e
+                    );
+                    PathBuf::from("/unknown/workspace")
+                }
             };
 
             // Get start time from /proc/[pid]/stat (field 22) - must be a reliable, positive value

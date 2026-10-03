@@ -18,6 +18,19 @@ pub struct DiscoveredSession {
     pub process_start_time: Option<u64>,
 }
 
+impl DiscoveredSession {
+    /// Deterministic total order comparator for recovery discovery:
+    /// 1. provider_id ASC
+    /// 2. project_path ASC
+    /// 3. process_id ASC
+    pub fn deterministic_cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.provider_id
+            .cmp(&other.provider_id)
+            .then_with(|| self.project_path.cmp(&other.project_path))
+            .then_with(|| self.process_id.cmp(&other.process_id))
+    }
+}
+
 /// The common trait implemented by all provider-specific adapters.
 /// Enforces complete decoupling: adapters translate vendor realities into common domain models.
 #[async_trait]

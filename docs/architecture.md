@@ -60,3 +60,43 @@ Observing a process in `/proc` proves OS process existence, **not** active task 
 - Active execution states (`WORKING`, `WAITING`) strictly require telemetry events from provider adapters.
 - Unmonitored active sessions experience adaptive silence timeouts: sessions in `WORKING` transition to `UNKNOWN` after 300 seconds of silence, while `STARTING` sessions transition to `UNKNOWN` after 60 seconds.
 - An unmonitored session recovering from `UNKNOWN` transitions back to `WORKING` only upon receipt of a valid telemetry event.
+
+## Crash Recovery & Resilience Architecture
+
+### 1. Deterministic Daemon Crash Recovery & Process Rediscovery
+- **Startup Recovery Sweep**: On daemon restart (following abrupt termination `kill -9` or graceful restart), an immediate `/proc` recovery sweep runs *prior* to claiming the well-known D-Bus bus name `org.freedesktop.WatchAI`.
+- **Deterministic Stable Surrogate IDs**: Discovered surviving processes are reconstructed using the deterministic identity formula:
+  $$\text{SessionID} = \text{SHA256}(\text{PID} + \text{process\_start\_time} + \text{project\_path})[0..16]$$
+- **Deterministic Process Sorting**: Discovered processes are sorted in canonical ascending order before registry insertion:
+  1. `provider_id` ASC
+  2. `project_path` ASC
+  3. `process_id` ASC
+- **Zero Phantom Sessions & Zero False Errors**: Sessions whose processes terminated while the daemon was offline are omitted from discovery; surviving processes start in `IDLE + DISCOVERY_REQUIRED` with zero false `ERROR` emissions.
+- **Per-Process Fault Isolation**: Reading `/proc/[pid]` is isolated per process. Unreadable, locked, or transiently disappearing processes are skipped with debug logging without aborting sibling process scanning.
+
+### 2. GNOME Shell Reconnection State Machine
+The client extension implements an explicit 4-state connection state machine:
+- `DISCONNECTED`: Initial state before first proxy acquisition attempt.
+- `CONNECTING`: Acquiring D-Bus proxy and initiating synchronization handshake.
+- `CONNECTED`: Active proxy, signal listeners attached, and live session cards rendered.
+- `RECONNECTING`: Daemon absent; cached presentation mode active, retrying with backoff.
+
+### 3. Asynchronous 5-Step Handshake with 5.0-Second Deadline
+When the daemon appears on D-Bus (`NameOwnerChanged`), the client initiates an atomic 5-step handshake:
+1. Reacquire `Gio.DBusProxy`.
+2. Query `GetAggregateState()` for authoritative top-bar state.
+3. Query `GetSessions()` for authoritative active session records.
+4. Attach D-Bus signal listeners (`AggregateStateChanged`, `SessionAdded`, `SessionUpdated`, `SessionRemoved`).
+5. Mark connection online (`CONNECTED`), replace cached cards with fresh state, and resume live duration ticking.
+
+Each handshake is bounded by a strict asynchronous **5.0-second client-side timeout** (`HANDSHAKE_TIMEOUT_MS = 5000`). If any step times out or fails, the handshake is aborted, the proxy reference is discarded, and a backoff retry is scheduled.
+
+### 4. Jittered Exponential Backoff & Crash Loop Defense
+To prevent D-Bus message storms and CPU thrashing during daemon crash loops:
+- **Base Interval**: 1.0s initial delay.
+- **Multiplier**: 2.0x per consecutive failure.
+- **Maximum Ceiling**: 30.0s clamp.
+- **Randomized Jitter**: $\pm 20\%$ offset applied to each interval:
+  $$\text{Delay} = \min(30000\text{ms}, 1000\text{ms} \times 2.0^n) \times [0.80, 1.20]$$
+- **Success Reset**: A complete, successful handshake resets consecutive failures to 0.
+- **Silent Recovery**: The client suppresses desktop notification alerts during crash loops and never executes external process managers.

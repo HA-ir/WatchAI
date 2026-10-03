@@ -1,6 +1,6 @@
 # Contract: D-Bus Local IPC Interface (`org.freedesktop.WatchAI`)
 
-**Specification**: Baseline Agent Monitoring & GNOME Shell Indicator (`001-agent-status-indicator`)  
+**Specification**: Baseline Agent Monitoring & GNOME Shell Indicator (`001-agent-status-indicator`), Crash & Recovery (`003-crash-recovery`)  
 **Transport**: D-Bus User Session Bus  
 **Bus Name**: `org.freedesktop.WatchAI`  
 **Object Path**: `/org/freedesktop/WatchAI`  
@@ -73,7 +73,59 @@ Emitted strictly when a completed or dead session's 60-second retention window e
 
 ---
 
-## 4. Privacy & Internal Field Invariant
+## 4. Daemon Presence & Reconnection Protocol
+
+### 4.1 Broker Signal Monitoring (`NameOwnerChanged`)
+Clients monitor the D-Bus daemon's standard presence signal:
+- **Interface**: `org.freedesktop.DBus`
+- **Signal**: `NameOwnerChanged(name: String, old_owner: String, new_owner: String)`
+- **Target Name**: `org.freedesktop.WatchAI`
+
+#### Client State Transitions:
+1. **Daemon Termination** (`new_owner == ""`):
+   - Proxy signal handlers are immediately disconnected.
+   - Indicator enters dimmed "Offline" styling (`watchai-state-offline`).
+   - AT-SPI accessible label updates to `"WatchAI daemon offline"`.
+   - Open session cards transition to `[CACHED]` presentation mode.
+   - Live duration timers are frozen.
+   - Client initiates jittered exponential backoff retries.
+
+2. **Daemon Emergence** (`new_owner != ""`):
+   - Any pending backoff retry timer is immediately cancelled.
+   - Client begins the atomic 5-step synchronization handshake.
+
+### 4.2 The 5-Step Synchronization Handshake
+When the daemon claims its bus name, synchronization proceeds in strictly sequential order:
+```text
+Step 1: Reacquire Proxy (Gio.DBusProxy for org.freedesktop.WatchAI)
+  │
+Step 2: GetAggregateState() ──► Updates top-bar indicator state
+  │
+Step 3: GetSessions()        ──► Replaces cached cards with fresh sessions
+  │
+Step 4: Attach Signals       ──► Connects AggregateStateChanged & Session*
+  │
+Step 5: Mark Online          ──► Restores live indicator & unfreezes timers
+```
+
+### 4.3 5.0-Second Handshake Deadline
+Each reconnection handshake is bounded by a client-side asynchronous timeout of **5.0 seconds** (`HANDSHAKE_TIMEOUT_MS = 5000`). If the daemon hangs, stalls, or fails to complete all steps before the deadline:
+1. Handshake is cancelled.
+2. In-flight proxy references are discarded.
+3. UI remains safely in `CACHED / OFFLINE` mode without freezing Mutter.
+4. Retry is scheduled with exponential backoff.
+
+### 4.4 Jittered Exponential Backoff
+$$\text{Delay} = \min(30000\text{ms}, 1000\text{ms} \times 2.0^n) \times [0.80, 1.20]$$
+- **Initial Interval**: 1.0s (1000ms).
+- **Multiplier**: 2.0x per consecutive failure.
+- **Ceiling**: 30.0s (30000ms).
+- **Jitter**: $\pm 20\%$ randomized variation.
+- **Success Reset**: Successfully completing Step 5 resets consecutive failures to 0.
+
+---
+
+## 5. Privacy & Internal Field Invariant
 
 To guarantee absolute compliance with Constitution Principle IV:
 - Public `SessionDto` strictly exposes the approved 9-field tuple `(sssssssus)`.
@@ -82,30 +134,24 @@ To guarantee absolute compliance with Constitution Principle IV:
 
 ---
 
-## 5. GJS / GNOME Shell Client Pattern
+## 6. GJS / GNOME Shell Client Pattern
 
-The GNOME Shell extension consumes this interface via `Gio.DBusProxy`:
+The GNOME Shell extension consumes this interface defensively via `Gio.DBusProxy`:
 
 ```javascript
-// Native asynchronous instantiation in GNOME Shell ESM
-const WatchAIProxy = Gio.DBusProxy.makeProxyWrapper(`
-<node>
-  <interface name="org.freedesktop.WatchAI">
-    <!-- Introspection XML -->
-  </interface>
-</node>
-`);
+// Native asynchronous instantiation in GNOME Shell ESM with NameOwnerChanged monitoring
+const WatchAIProxy = Gio.DBusProxy.makeProxyWrapper(WatchAIDbusInterface);
 
-// Connect asynchronously without blocking Mutter
 this._proxy = new WatchAIProxy(
     Gio.DBus.session,
     'org.freedesktop.WatchAI',
     '/org/freedesktop/WatchAI',
     (initProxy, error) => {
-        if (!error) {
-            this._proxy.connectSignal('AggregateStateChanged', (proxy, sender, params) => {
-                this._onAggregateStateChanged(...params);
-            });
+        if (!error && initProxy && initProxy.g_name_owner) {
+            // Initiate 5-step handshake bounded by 5.0s timeout
+            this._runHandshake(initProxy);
+        } else {
+            this._handleDisconnect();
         }
     }
 );

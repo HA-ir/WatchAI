@@ -8,14 +8,21 @@ export default class WatchAIExtension extends Extension {
         this._indicator = new WatchAIIndicator();
 
         this._dbusClient = new WatchAIDbusClient({
-            onConnected: () => {
-                // Fetch full session list on connection/reconnection
-                if (this._dbusClient && this._indicator) {
-                    this._dbusClient.fetchSessions((sessions) => {
-                        if (this._indicator && this._indicator.popover) {
-                            this._indicator.popover.setSessions(sessions);
-                        }
-                    });
+            onConnected: (payload) => {
+                if (!this._indicator) return;
+                if (payload && payload.aggregateState) {
+                    this._indicator.updateState(
+                        payload.aggregateState.state,
+                        payload.aggregateState.activeCount,
+                        payload.aggregateState.waitingCount,
+                        payload.aggregateState.errorCount
+                    );
+                }
+                if (this._indicator.popover) {
+                    this._indicator.popover.setOfflineMode(false);
+                    if (payload && payload.sessions) {
+                        this._indicator.popover.setSessions(payload.sessions);
+                    }
                 }
             },
             onDisconnected: () => {

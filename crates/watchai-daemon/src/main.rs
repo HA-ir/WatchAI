@@ -1,7 +1,8 @@
 mod sync;
 
 use chrono::Utc;
-use std::time::Duration;
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
 use tracing::{error, info, warn};
 use watchai_adapters::registry::AdapterRegistry;
 use watchai_core::liveness::{
@@ -13,6 +14,32 @@ use watchai_ipc::dbus_service::{WatchAiDbusService, BUS_NAME, OBJECT_PATH};
 use watchai_ipc::protocol::SessionDto;
 
 use crate::sync::sync_aggregate_state;
+
+/// Rate-limiter to prevent log saturation during persistent errors or signal failures.
+pub struct RateLimiter {
+    min_interval: Duration,
+    last_emitted: HashMap<String, Instant>,
+}
+
+impl RateLimiter {
+    pub fn new(min_interval: Duration) -> Self {
+        Self {
+            min_interval,
+            last_emitted: HashMap::new(),
+        }
+    }
+
+    pub fn should_log(&mut self, key: &str) -> bool {
+        let now = Instant::now();
+        if let Some(last) = self.last_emitted.get(key) {
+            if now.duration_since(*last) < self.min_interval {
+                return false;
+            }
+        }
+        self.last_emitted.insert(key.to_string(), now);
+        true
+    }
+}
 
 /// Waits for an operating system shutdown signal (SIGINT or SIGTERM on Unix).
 pub async fn wait_for_shutdown_signal() {
@@ -65,9 +92,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let dbus_service = WatchAiDbusService::new(registry.clone());
     let aggregate_lock = dbus_service.aggregate();
 
-    // 1. Immediate startup /proc discovery sweep before starting background tasks (T061)
+    // 1. Immediate startup /proc discovery sweep before starting background tasks (T075, T076, T077)
     info!("Performing immediate startup /proc discovery sweep...");
-    let startup_discovered = adapter_registry.discover_all().await;
+    let mut startup_discovered = adapter_registry.discover_all().await;
+    // Deterministic sorting of surviving processes: provider_id ASC, project_path ASC, process_id ASC (T076)
+    startup_discovered.sort_by(|a, b| a.deterministic_cmp(b));
+
     for d in startup_discovered {
         info!(
             "Discovered surviving session on startup: provider={}, id={}",
@@ -127,6 +157,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut interval =
             tokio::time::interval(Duration::from_secs(LIVENESS_CHECK_INTERVAL_SECONDS));
         let proc_reader = RealProcStatReader;
+        let mut rate_limiter = RateLimiter::new(Duration::from_secs(60));
 
         loop {
             tokio::select! {
@@ -140,7 +171,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         if let Err(e) =
                             WatchAiDbusService::emit_session_updated(bg_iface.signal_context(), &dto).await
                         {
-                            warn!("Failed to emit SessionUpdated signal: {}", e);
+                            if rate_limiter.should_log("session_updated_signal_err") {
+                                warn!("Failed to emit SessionUpdated signal (rate-limited): {}", e);
+                            }
                         }
                     }
 
@@ -152,7 +185,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             WatchAiDbusService::emit_session_removed(bg_iface.signal_context(), &pruned_id)
                                 .await
                         {
-                            warn!("Failed to emit SessionRemoved signal: {}", e);
+                            if rate_limiter.should_log("session_removed_signal_err") {
+                                warn!("Failed to emit SessionRemoved signal (rate-limited): {}", e);
+                            }
                         }
                     }
 
@@ -183,7 +218,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 WatchAiDbusService::emit_session_added(bg_iface.signal_context(), &dto)
                                     .await
                             {
-                                warn!("Failed to emit SessionAdded signal: {}", e);
+                                if rate_limiter.should_log("session_added_signal_err") {
+                                    warn!("Failed to emit SessionAdded signal (rate-limited): {}", e);
+                                }
                             }
                         }
                     }
@@ -207,7 +244,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         )
                         .await
                         {
-                            warn!("Failed to emit AggregateStateChanged signal: {}", e);
+                            if rate_limiter.should_log("aggregate_state_signal_err") {
+                                warn!("Failed to emit AggregateStateChanged signal (rate-limited): {}", e);
+                            }
                         }
                     }
                 }
