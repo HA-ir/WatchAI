@@ -59,8 +59,17 @@ impl ProcessScanner {
                 Err(_) => PathBuf::from("/unknown/workspace"),
             };
 
-            // Get start time from /proc/[pid]/stat (field 22)
-            let start_time = Self::read_process_start_time(&proc_path).unwrap_or(0);
+            // Get start time from /proc/[pid]/stat (field 22) - must be a reliable, positive value
+            let start_time = match Self::read_process_start_time(&proc_path) {
+                Some(st) if st > 0 => st,
+                _ => {
+                    debug!(
+                        "Skipping process {}: start time could not be read reliably from /proc/[pid]/stat",
+                        pid
+                    );
+                    continue;
+                }
+            };
 
             let session_id = derive_process_session_id(pid, start_time, &project_path);
             trace!(
@@ -76,9 +85,10 @@ impl ProcessScanner {
                 provider_display_name: provider_display_name.to_string(),
                 project_path,
                 process_id: Some(pid),
-                initial_state: LifecycleState::Working,
+                initial_state: LifecycleState::Idle,
                 started_at: Utc::now(),
                 adapter_status: AdapterStatus::DiscoveryRequired,
+                process_start_time: Some(start_time),
             });
         }
 
@@ -86,13 +96,8 @@ impl ProcessScanner {
     }
 
     /// Read process start time ticks from /proc/[pid]/stat.
-    fn read_process_start_time(proc_path: &Path) -> Option<u64> {
+    pub fn read_process_start_time(proc_path: &Path) -> Option<u64> {
         let stat_content = fs::read_to_string(proc_path.join("stat")).ok()?;
-        // The stat file format has comm in parentheses, e.g. "123 (claude) S 1 ..."
-        let close_paren_idx = stat_content.rfind(')')?;
-        let rest = &stat_content[close_paren_idx + 1..];
-        let fields: Vec<&str> = rest.split_whitespace().collect();
-        // starttime is the 20th field after comm (field 22 overall, 0-indexed as field 19 after ')')
-        fields.get(19).and_then(|val| val.parse::<u64>().ok())
+        watchai_core::liveness::parse_proc_stat_starttime(&stat_content)
     }
 }

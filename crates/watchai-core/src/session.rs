@@ -66,14 +66,25 @@ pub struct AgentSession {
     pub started_at: DateTime<Utc>,
     /// Timestamp when the current state was entered.
     pub state_entered_at: DateTime<Utc>,
-    /// Timestamp of most recent telemetry event, heartbeat, or process check.
+    /// Timestamp of most recent telemetry event or activity update.
     pub last_seen_at: DateTime<Utc>,
+    /// Timestamp of most recent successful process liveness verification.
+    #[serde(skip)]
+    pub last_proc_check_at: Option<DateTime<Utc>>,
     /// OS Process ID (PID) if safely discoverable.
     pub process_id: Option<u32>,
     /// Active high-level sanitized tool category.
     pub active_tool_category: Option<ToolCategory>,
     /// Adapter discovery status.
     pub adapter_status: AdapterStatus,
+    /// Process start time in clock ticks since boot (/proc/[pid]/stat field 22).
+    /// Used internally to detect PID reuse; strictly private and excluded from serialization/IPC.
+    #[serde(skip)]
+    pub process_start_time: Option<u64>,
+    /// Number of consecutive failed /proc checks.
+    /// Reaching 2 triggers ungraceful termination; strictly private and excluded from serialization/IPC.
+    #[serde(skip)]
+    pub consecutive_proc_failures: u32,
 }
 
 impl AgentSession {
@@ -106,10 +117,19 @@ impl AgentSession {
             started_at: now,
             state_entered_at: now,
             last_seen_at: now,
+            last_proc_check_at: None,
             process_id,
             active_tool_category: None,
             adapter_status,
+            process_start_time: None,
+            consecutive_proc_failures: 0,
         }
+    }
+
+    /// Attach process start time for PID reuse verification.
+    pub fn with_process_start_time(mut self, start_time: Option<u64>) -> Self {
+        self.process_start_time = start_time;
+        self
     }
 
     /// Attempt to transition to a new lifecycle state.
@@ -147,9 +167,26 @@ impl AgentSession {
         Ok(())
     }
 
-    /// Update liveness heartbeat without changing state.
+    /// Update telemetry activity heartbeat without changing state.
     pub fn touch(&mut self) {
         self.last_seen_at = Utc::now();
+    }
+
+    /// Update process liveness verification timestamp.
+    /// Crucial invariant: Does NOT update `last_seen_at`, preserving the telemetry silence timer.
+    pub fn touch_proc_liveness(&mut self) {
+        self.last_proc_check_at = Some(Utc::now());
+    }
+
+    /// Apply an incoming telemetry event to the session.
+    /// Recovers sessions from UNKNOWN to WORKING or other valid states and updates timestamps.
+    pub fn apply_telemetry(
+        &mut self,
+        target_state: LifecycleState,
+        sequence_number: u64,
+        tool_category: Option<ToolCategory>,
+    ) -> Result<(), String> {
+        self.transition_to(target_state, sequence_number, tool_category)
     }
 }
 

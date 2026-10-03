@@ -15,6 +15,7 @@ pub struct DiscoveredSession {
     pub initial_state: LifecycleState,
     pub started_at: DateTime<Utc>,
     pub adapter_status: AdapterStatus,
+    pub process_start_time: Option<u64>,
 }
 
 /// The common trait implemented by all provider-specific adapters.

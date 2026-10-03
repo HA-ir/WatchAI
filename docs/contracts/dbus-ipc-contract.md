@@ -52,6 +52,7 @@ Fetches a single session record by its unique `session_id`.
 Emitted immediately whenever the aggregate state or active counters change.
 - **Payload**: `(state: String, active_session_count: u32, waiting_session_count: u32, error_session_count: u32, updated_at: String)`
 - **Client Action**: GNOME Shell extension updates the top-bar icon, badge, and accessibility description.
+- **Throttling Invariant**: Emitted **only** when `state`, `active_session_count`, `waiting_session_count`, or `error_session_count` changes. Intermediate heartbeats, timestamp updates, and background liveness ticks that leave the state and counters unchanged are suppressed to prevent desktop compositor redraw storms.
 
 ### 3.2 `SessionAdded`
 Emitted when a new agent session is discovered or initiated.
@@ -62,15 +63,26 @@ Emitted when a new agent session is discovered or initiated.
 Emitted when an existing session transitions to a new lifecycle state or updates its tool activity.
 - **Payload**: `(session: Session Struct)`
 - **Client Action**: Popover menu updates the corresponding session card state badge and duration.
+- **Ordering on Process Crash**: If a session terminates abruptly, `SessionUpdated` is broadcast first with the updated `ERROR` state, followed immediately by `AggregateStateChanged`.
 
 ### 3.4 `SessionRemoved`
-Emitted when a completed or dead session's retention window expires and it is pruned from memory.
+Emitted strictly when a completed or dead session's 60-second retention window expires and it is pruned from memory.
 - **Payload**: `(session_id: String)`
 - **Client Action**: Popover menu removes the card.
+- **Ordering on Retention Pruning**: `SessionRemoved` is broadcast strictly after the session is purged from `SessionRegistry`. If the removal alters aggregate counters, `AggregateStateChanged` is broadcast immediately following removal.
 
 ---
 
-## 4. GJS / GNOME Shell Client Pattern
+## 4. Privacy & Internal Field Invariant
+
+To guarantee absolute compliance with Constitution Principle IV:
+- Public `SessionDto` strictly exposes the approved 9-field tuple `(sssssssus)`.
+- Internal daemon metadata—specifically `process_start_time` (clock ticks since boot) and `consecutive_proc_failures`—are private in-memory fields and are **never** exposed over the public D-Bus contract.
+- No prompts, model completions, source code, git diffs, file contents, command-line arguments, shell output, or credentials are transmitted over D-Bus.
+
+---
+
+## 5. GJS / GNOME Shell Client Pattern
 
 The GNOME Shell extension consumes this interface via `Gio.DBusProxy`:
 

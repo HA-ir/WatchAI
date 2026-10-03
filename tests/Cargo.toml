@@ -14,3 +14,7 @@ chrono.workspace = true
 [[test]]
 name = "us1_single_session_flow_test"
 path = "us1_single_session_flow_test.rs"
+
+[[test]]
+name = "quickstart_scenarios_test"
+path = "quickstart_scenarios_test.rs"
