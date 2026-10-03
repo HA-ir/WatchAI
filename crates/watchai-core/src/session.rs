@@ -66,8 +66,11 @@ pub struct AgentSession {
     pub started_at: DateTime<Utc>,
     /// Timestamp when the current state was entered.
     pub state_entered_at: DateTime<Utc>,
-    /// Timestamp of most recent telemetry event, heartbeat, or process check.
+    /// Timestamp of most recent telemetry event or activity update.
     pub last_seen_at: DateTime<Utc>,
+    /// Timestamp of most recent successful process liveness verification.
+    #[serde(skip)]
+    pub last_proc_check_at: Option<DateTime<Utc>>,
     /// OS Process ID (PID) if safely discoverable.
     pub process_id: Option<u32>,
     /// Active high-level sanitized tool category.
@@ -114,6 +117,7 @@ impl AgentSession {
             started_at: now,
             state_entered_at: now,
             last_seen_at: now,
+            last_proc_check_at: None,
             process_id,
             active_tool_category: None,
             adapter_status,
@@ -163,9 +167,15 @@ impl AgentSession {
         Ok(())
     }
 
-    /// Update liveness heartbeat without changing state.
+    /// Update telemetry activity heartbeat without changing state.
     pub fn touch(&mut self) {
         self.last_seen_at = Utc::now();
+    }
+
+    /// Update process liveness verification timestamp.
+    /// Crucial invariant: Does NOT update `last_seen_at`, preserving the telemetry silence timer.
+    pub fn touch_proc_liveness(&mut self) {
+        self.last_proc_check_at = Some(Utc::now());
     }
 
     /// Apply an incoming telemetry event to the session.

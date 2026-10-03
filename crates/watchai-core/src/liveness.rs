@@ -138,7 +138,7 @@ pub fn check_session_liveness<R: ProcStatReader>(
             }
 
             session.consecutive_proc_failures = 0;
-            session.touch();
+            session.touch_proc_liveness();
             LivenessCheckResult::Alive
         }
         Err(e) => {
@@ -228,13 +228,25 @@ pub async fn run_liveness_cycle<R: ProcStatReader>(
         let initial_state = session.current_state;
         let initial_failures = session.consecutive_proc_failures;
 
-        if session.process_id.is_some() {
-            let res = check_session_liveness(&mut session, reader);
-            if let LivenessCheckResult::Dead { .. } = res {
-                outcome.dead_sessions.push(session.clone());
+        // Terminal sessions (SUCCESS, CANCELLED, ERROR) have completed:
+        // Do NOT run liveness or silence checks on them. They remain retained in their terminal
+        // state until pruned by `prune_retained_sessions`.
+        if !session.current_state.is_terminal() {
+            // 1. Process survival check if PID is present
+            if session.process_id.is_some() {
+                let res = check_session_liveness(&mut session, reader);
+                if let LivenessCheckResult::Dead { .. } = res {
+                    outcome.dead_sessions.push(session.clone());
+                }
             }
-        } else {
-            check_silence_timeout(&mut session, now);
+
+            // 2. Activity silence timeout check:
+            // Crucial invariant: /proc process presence is NOT activity telemetry.
+            // If telemetry has stopped for >300s (WORKING) or >60s (STARTING),
+            // the session transitions to UNKNOWN regardless of whether its PID is still running.
+            if !session.current_state.is_terminal() {
+                check_silence_timeout(&mut session, now);
+            }
         }
 
         if session.current_state != initial_state

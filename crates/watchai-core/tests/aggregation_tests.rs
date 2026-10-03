@@ -136,11 +136,63 @@ fn test_contextual_tie_breaking_recency_and_lexicographical() {
     s_lex1.state_entered_at = common_time;
     s_lex2.state_entered_at = common_time;
 
-    let res2 = compute_aggregate_state(&[s_lex2.clone(), s_lex1.clone()], now);
+    // Must be completely input-order independent: [alpha, beta] -> alpha
+    let res_order1 = compute_aggregate_state(&[s_lex1.clone(), s_lex2.clone()], now);
     assert_eq!(
-        res2.focused_session_id.as_deref(),
+        res_order1.focused_session_id.as_deref(),
         Some("sess-alpha"),
-        "Lexicographical session_id must break ties when timestamps match"
+        "Input order [alpha, beta] must yield sess-alpha"
+    );
+
+    // [beta, alpha] -> alpha
+    let res_order2 = compute_aggregate_state(&[s_lex2.clone(), s_lex1.clone()], now);
+    assert_eq!(
+        res_order2.focused_session_id.as_deref(),
+        Some("sess-alpha"),
+        "Input order [beta, alpha] must yield sess-alpha"
+    );
+
+    // Three sessions: all permutations of [alpha, beta, gamma] must yield alpha
+    let mut s_lex3 = make_session("sess-gamma", LifecycleState::Waiting, 10);
+    s_lex3.state_entered_at = common_time;
+
+    let permutations = [
+        vec![s_lex1.clone(), s_lex2.clone(), s_lex3.clone()],
+        vec![s_lex1.clone(), s_lex3.clone(), s_lex2.clone()],
+        vec![s_lex2.clone(), s_lex1.clone(), s_lex3.clone()],
+        vec![s_lex2.clone(), s_lex3.clone(), s_lex1.clone()],
+        vec![s_lex3.clone(), s_lex1.clone(), s_lex2.clone()],
+        vec![s_lex3.clone(), s_lex2.clone(), s_lex1.clone()],
+    ];
+
+    for (idx, perm) in permutations.iter().enumerate() {
+        let res_p = compute_aggregate_state(perm, now);
+        assert_eq!(
+            res_p.focused_session_id.as_deref(),
+            Some("sess-alpha"),
+            "Permutation {} must yield sess-alpha",
+            idx
+        );
+    }
+
+    // Adding unrelated sessions with lower priority must not change the winner
+    let s_unrelated1 = make_session("sess-0-unrelated", LifecycleState::Idle, 5);
+    let s_unrelated2 = make_session("sess-z-unrelated", LifecycleState::Working, 5);
+
+    let res_with_unrelated = compute_aggregate_state(
+        &[
+            s_unrelated1,
+            s_lex2.clone(),
+            s_unrelated2,
+            s_lex1.clone(),
+            s_lex3.clone(),
+        ],
+        now,
+    );
+    assert_eq!(
+        res_with_unrelated.focused_session_id.as_deref(),
+        Some("sess-alpha"),
+        "Unrelated lower-priority sessions must not affect deterministic tie-breaker winner"
     );
 }
 

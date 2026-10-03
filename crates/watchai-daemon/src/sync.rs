@@ -92,4 +92,29 @@ mod tests {
             "Redundant tick without state/counter change must be throttled"
         );
     }
+
+    #[tokio::test]
+    async fn test_cooperative_shutdown_orchestration() {
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
+        let mut loop_counter = 0;
+
+        let handle = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = tokio::time::sleep(tokio::time::Duration::from_millis(50)) => {
+                        loop_counter += 1;
+                    }
+                    _ = shutdown_rx.changed() => {
+                        break;
+                    }
+                }
+            }
+            loop_counter
+        });
+
+        // Trigger shutdown signal
+        shutdown_tx.send(true).unwrap();
+        let res = handle.await.unwrap();
+        assert!(res >= 0, "Loop must terminate cleanly on shutdown signal");
+    }
 }

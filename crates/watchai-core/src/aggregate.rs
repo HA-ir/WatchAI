@@ -89,22 +89,49 @@ pub fn is_active_session(session: &AgentSession, now: DateTime<Utc>) -> bool {
     }
 }
 
-/// Comparator for deterministic contextual session selection:
+/// Evaluates whether `candidate` is strictly preferred over `current_best`
+/// according to the deterministic contextual ordering:
 /// 1. Higher effective priority wins.
 /// 2. Later (more recent) `state_entered_at` wins.
-/// 3. Lexicographically smaller `session_id` wins.
+/// 3. Lexicographically smaller `session_id` wins (e.g. "alpha" beats "beta").
+pub fn is_preferred(
+    candidate: &AgentSession,
+    current_best: &AgentSession,
+    now: DateTime<Utc>,
+) -> bool {
+    let prio_cand = effective_priority(candidate, now);
+    let prio_best = effective_priority(current_best, now);
+
+    if prio_cand != prio_best {
+        return prio_cand > prio_best;
+    }
+
+    if candidate.state_entered_at != current_best.state_entered_at {
+        return candidate.state_entered_at > current_best.state_entered_at;
+    }
+
+    candidate.session_id < current_best.session_id
+}
+
+/// Comparator for deterministic contextual session selection:
+/// Returns `Ordering::Greater` if `a` is preferred over `b`,
+/// `Ordering::Less` if `b` is preferred over `a`,
+/// and `Ordering::Equal` if they have identical attributes and session_id.
 pub fn compare_contextual_priority(
     a: &AgentSession,
     b: &AgentSession,
     now: DateTime<Utc>,
 ) -> std::cmp::Ordering {
-    let prio_a = effective_priority(a, now);
-    let prio_b = effective_priority(b, now);
-
-    prio_a
-        .cmp(&prio_b)
-        .then_with(|| a.state_entered_at.cmp(&b.state_entered_at))
-        .then_with(|| b.session_id.cmp(&a.session_id)) // inverted so smaller session_id compares Greater
+    if a.session_id == b.session_id
+        && a.state_entered_at == b.state_entered_at
+        && effective_priority(a, now) == effective_priority(b, now)
+    {
+        std::cmp::Ordering::Equal
+    } else if is_preferred(a, b, now) {
+        std::cmp::Ordering::Greater
+    } else {
+        std::cmp::Ordering::Less
+    }
 }
 
 /// Computes the desktop aggregate state, session counters, and contextual focus
@@ -141,10 +168,18 @@ pub fn compute_aggregate_state(
         }
     }
 
-    // Select the contextually dominant session
-    let best_session = sessions
-        .iter()
-        .max_by(|a, b| compare_contextual_priority(a, b, now));
+    // Select the contextually dominant session in an input-order-independent manner
+    let mut best_session: Option<&AgentSession> = None;
+    for s in sessions {
+        match best_session {
+            None => best_session = Some(s),
+            Some(cur) => {
+                if is_preferred(s, cur, now) {
+                    best_session = Some(s);
+                }
+            }
+        }
+    }
 
     let (aggregate_state, focused_session_id) = match best_session {
         Some(s) => {

@@ -150,3 +150,144 @@ async fn test_terminal_retention_pruning_sixty_seconds() {
     // Working session is still in memory
     assert!(registry.get("sess-working").await.is_some());
 }
+
+struct TestProcReader {
+    valid_pids: std::collections::HashSet<u32>,
+}
+
+impl watchai_core::liveness::ProcStatReader for TestProcReader {
+    fn read_stat(&self, pid: u32) -> Result<String, std::io::Error> {
+        if self.valid_pids.contains(&pid) {
+            Ok(format!(
+                "{} (claude) S 1 1 1 0 0 4194304 100 0 0 0 10 20 0 0 20 0 4 0 50000 12345678",
+                pid
+            ))
+        } else {
+            Err(std::io::Error::from(std::io::ErrorKind::NotFound))
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_pid_present_session_transitions_to_unknown_after_telemetry_silence() {
+    let registry = SessionRegistry::new();
+    let now = Utc::now();
+    let mut valid_pids = std::collections::HashSet::new();
+    valid_pids.insert(2001);
+    valid_pids.insert(2002);
+    let reader = TestProcReader { valid_pids };
+
+    // 1. Session in WORKING with PID 2001, but telemetry has been silent for 305s (>300s)
+    let mut s_working = AgentSession::new(
+        "sess-working-silent".to_string(),
+        "claude-code",
+        "Claude Code",
+        "/home/user/project",
+        Some(2001),
+        LifecycleState::Working,
+        AdapterStatus::Active,
+    )
+    .with_process_start_time(Some(50000));
+    s_working.last_seen_at = now - Duration::seconds(305);
+    registry.upsert(s_working).await;
+
+    // 2. Session in STARTING with PID 2002, but telemetry has been silent for 65s (>60s)
+    let mut s_starting = AgentSession::new(
+        "sess-starting-silent".to_string(),
+        "claude-code",
+        "Claude Code",
+        "/home/user/project",
+        Some(2002),
+        LifecycleState::Starting,
+        AdapterStatus::Active,
+    )
+    .with_process_start_time(Some(50000));
+    s_starting.last_seen_at = now - Duration::seconds(65);
+    registry.upsert(s_starting).await;
+
+    // Run liveness cycle: PID exists in /proc, but silence thresholds are exceeded!
+    let outcome = watchai_core::liveness::run_liveness_cycle(&registry, &reader, now).await;
+    assert_eq!(outcome.updated_sessions.len(), 2);
+
+    let rec_working = registry.get("sess-working-silent").await.unwrap();
+    assert_eq!(
+        rec_working.current_state,
+        LifecycleState::Unknown,
+        "WORKING session with PID must transition to UNKNOWN when telemetry is silent for >300s"
+    );
+
+    let rec_starting = registry.get("sess-starting-silent").await.unwrap();
+    assert_eq!(
+        rec_starting.current_state,
+        LifecycleState::Unknown,
+        "STARTING session with PID must transition to UNKNOWN when telemetry is silent for >60s"
+    );
+
+    // 3. Merely observing /proc in next cycle does NOT recover UNKNOWN -> WORKING
+    let outcome2 =
+        watchai_core::liveness::run_liveness_cycle(&registry, &reader, now + Duration::seconds(2))
+            .await;
+    assert_eq!(
+        outcome2.updated_sessions.len(),
+        0,
+        "Subsequent /proc checks must not transition UNKNOWN -> WORKING"
+    );
+    let rec_working_still_unknown = registry.get("sess-working-silent").await.unwrap();
+    assert_eq!(
+        rec_working_still_unknown.current_state,
+        LifecycleState::Unknown,
+        "Process presence alone cannot recover UNKNOWN to WORKING"
+    );
+
+    // 4. Valid telemetry recovers UNKNOWN -> WORKING
+    let mut session_to_recover = rec_working_still_unknown;
+    session_to_recover
+        .apply_telemetry(
+            LifecycleState::Working,
+            session_to_recover.sequence_number + 1,
+            Some(ToolCategory::FileRead),
+        )
+        .unwrap();
+    assert_eq!(
+        session_to_recover.current_state,
+        LifecycleState::Working,
+        "Valid telemetry must recover UNKNOWN -> WORKING"
+    );
+}
+
+#[tokio::test]
+async fn test_terminal_sessions_immune_from_liveness_failure() {
+    let registry = SessionRegistry::new();
+    let now = Utc::now();
+    // Reader has no valid PIDs (the process exited cleanly after completing task)
+    let reader = TestProcReader {
+        valid_pids: std::collections::HashSet::new(),
+    };
+
+    let s_success = AgentSession::new(
+        "sess-completed".to_string(),
+        "claude-code",
+        "Claude Code",
+        "/home/user/project",
+        Some(9999), // Process no longer exists in /proc
+        LifecycleState::Success,
+        AdapterStatus::Active,
+    );
+    registry.upsert(s_success).await;
+
+    // Run liveness cycle
+    let outcome = watchai_core::liveness::run_liveness_cycle(&registry, &reader, now).await;
+    assert_eq!(
+        outcome.updated_sessions.len(),
+        0,
+        "Completed terminal session must not be checked or mutated by liveness"
+    );
+    assert_eq!(outcome.dead_sessions.len(), 0);
+
+    let rec = registry.get("sess-completed").await.unwrap();
+    assert_eq!(
+        rec.current_state,
+        LifecycleState::Success,
+        "Completed session must remain in SUCCESS throughout retention"
+    );
+}

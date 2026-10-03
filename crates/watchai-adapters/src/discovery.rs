@@ -59,7 +59,17 @@ impl ProcessScanner {
                 Err(_) => PathBuf::from("/unknown/workspace"),
             };
 
-            let start_time = Self::read_process_start_time(&proc_path).unwrap_or(0);
+            // Get start time from /proc/[pid]/stat (field 22) - must be a reliable, positive value
+            let start_time = match Self::read_process_start_time(&proc_path) {
+                Some(st) if st > 0 => st,
+                _ => {
+                    debug!(
+                        "Skipping process {}: start time could not be read reliably from /proc/[pid]/stat",
+                        pid
+                    );
+                    continue;
+                }
+            };
 
             let session_id = derive_process_session_id(pid, start_time, &project_path);
             trace!(
@@ -86,7 +96,7 @@ impl ProcessScanner {
     }
 
     /// Read process start time ticks from /proc/[pid]/stat.
-    fn read_process_start_time(proc_path: &Path) -> Option<u64> {
+    pub fn read_process_start_time(proc_path: &Path) -> Option<u64> {
         let stat_content = fs::read_to_string(proc_path.join("stat")).ok()?;
         watchai_core::liveness::parse_proc_stat_starttime(&stat_content)
     }
