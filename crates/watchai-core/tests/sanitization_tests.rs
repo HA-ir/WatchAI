@@ -59,6 +59,34 @@ fn test_data_sanitization_whitelist() {
 }
 
 #[test]
+fn test_internal_liveness_fields_excluded_from_serialization() {
+    let mut session = AgentSession::new(
+        "sess-internal-fields".to_string(),
+        "claude-code",
+        "Claude Code",
+        "/home/user/project",
+        Some(5555),
+        LifecycleState::Working,
+        AdapterStatus::Active,
+    );
+    session.process_start_time = Some(888888);
+    session.consecutive_proc_failures = 1;
+
+    let json_val = serde_json::to_value(&session).expect("Failed to serialize session");
+    let json_obj = json_val.as_object().expect("Expected JSON object");
+
+    // Internal fields must never be serialized
+    assert!(
+        !json_obj.contains_key("process_start_time"),
+        "Security violation: internal process_start_time leaked into serialized JSON!"
+    );
+    assert!(
+        !json_obj.contains_key("consecutive_proc_failures"),
+        "Security violation: internal consecutive_proc_failures leaked into serialized JSON!"
+    );
+}
+
+#[test]
 fn test_tool_category_serialization() {
     let mut session = AgentSession::new(
         "sess-tool-cat".to_string(),

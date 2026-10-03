@@ -74,6 +74,14 @@ pub struct AgentSession {
     pub active_tool_category: Option<ToolCategory>,
     /// Adapter discovery status.
     pub adapter_status: AdapterStatus,
+    /// Process start time in clock ticks since boot (/proc/[pid]/stat field 22).
+    /// Used internally to detect PID reuse; strictly private and excluded from serialization/IPC.
+    #[serde(skip)]
+    pub process_start_time: Option<u64>,
+    /// Number of consecutive failed /proc checks.
+    /// Reaching 2 triggers ungraceful termination; strictly private and excluded from serialization/IPC.
+    #[serde(skip)]
+    pub consecutive_proc_failures: u32,
 }
 
 impl AgentSession {
@@ -109,7 +117,15 @@ impl AgentSession {
             process_id,
             active_tool_category: None,
             adapter_status,
+            process_start_time: None,
+            consecutive_proc_failures: 0,
         }
+    }
+
+    /// Attach process start time for PID reuse verification.
+    pub fn with_process_start_time(mut self, start_time: Option<u64>) -> Self {
+        self.process_start_time = start_time;
+        self
     }
 
     /// Attempt to transition to a new lifecycle state.
@@ -150,6 +166,17 @@ impl AgentSession {
     /// Update liveness heartbeat without changing state.
     pub fn touch(&mut self) {
         self.last_seen_at = Utc::now();
+    }
+
+    /// Apply an incoming telemetry event to the session.
+    /// Recovers sessions from UNKNOWN to WORKING or other valid states and updates timestamps.
+    pub fn apply_telemetry(
+        &mut self,
+        target_state: LifecycleState,
+        sequence_number: u64,
+        tool_category: Option<ToolCategory>,
+    ) -> Result<(), String> {
+        self.transition_to(target_state, sequence_number, tool_category)
     }
 }
 

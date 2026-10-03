@@ -61,7 +61,10 @@ impl LifecycleState {
         }
 
         match self {
-            Self::Idle => matches!(target, Self::Starting | Self::Working | Self::Unknown),
+            Self::Idle => matches!(
+                target,
+                Self::Starting | Self::Working | Self::Unknown | Self::Error
+            ),
             Self::Starting => matches!(
                 target,
                 Self::Working
