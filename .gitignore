@@ -1,0 +1,32 @@
+# Rust build artifacts
+target/
+debug/
+release/
+*.rs.bk
+*.rlib
+*.prof*
+
+# Environment and secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Editor and IDE configurations
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Logs and runtime sockets
+*.log
+*.sock
+run/
+tmp/
+
+# GNOME / GSettings artifacts
+*.gschema.valid
+gschemas.compiled

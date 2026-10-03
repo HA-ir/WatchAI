@@ -1,0 +1,62 @@
+<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
+"http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
+<node name="/org/freedesktop/WatchAI">
+  <interface name="org.freedesktop.WatchAI">
+
+    <!-- Methods -->
+    <method name="GetAggregateState">
+      <arg name="state" type="s" direction="out" />
+      <arg name="active_session_count" type="u" direction="out" />
+      <arg name="waiting_session_count" type="u" direction="out" />
+      <arg name="error_session_count" type="u" direction="out" />
+      <arg name="updated_at" type="s" direction="out" />
+    </method>
+
+    <method name="GetSessions">
+      <arg name="sessions" type="a(sssssssus)" direction="out" />
+      <!-- Struct elements:
+           s: session_id
+           s: provider_id
+           s: provider_display_name
+           s: project_name
+           s: current_state
+           s: started_at (ISO 8601)
+           s: state_entered_at (ISO 8601)
+           u: process_id (0 if unknown)
+           s: active_tool_category
+      -->
+    </method>
+
+    <method name="GetSession">
+      <arg name="session_id" type="s" direction="in" />
+      <arg name="session" type="(sssssssus)" direction="out" />
+    </method>
+
+    <!-- Signals for Reactive UI Updates -->
+    <signal name="AggregateStateChanged">
+      <arg name="state" type="s" />
+      <arg name="active_session_count" type="u" />
+      <arg name="waiting_session_count" type="u" />
+      <arg name="error_session_count" type="u" />
+      <arg name="updated_at" type="s" />
+    </signal>
+
+    <signal name="SessionAdded">
+      <arg name="session" type="(sssssssus)" />
+    </signal>
+
+    <signal name="SessionUpdated">
+      <arg name="session" type="(sssssssus)" />
+    </signal>
+
+    <signal name="SessionRemoved">
+      <arg name="session_id" type="s" />
+    </signal>
+
+    <!-- Properties -->
+    <property name="AggregateState" type="s" access="read" />
+    <property name="ActiveSessionCount" type="u" access="read" />
+    <property name="DaemonVersion" type="s" access="read" />
+
+  </interface>
+</node>

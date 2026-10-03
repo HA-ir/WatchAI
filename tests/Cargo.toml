@@ -1,0 +1,16 @@
+[package]
+name = "watchai-integration-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+watchai-core = { path = "../crates/watchai-core" }
+watchai-adapters = { path = "../crates/watchai-adapters" }
+watchai-ipc = { path = "../crates/watchai-ipc" }
+tokio = { workspace = true, features = ["full", "test-util"] }
+chrono.workspace = true
+
+[[test]]
+name = "us1_single_session_flow_test"
+path = "us1_single_session_flow_test.rs"

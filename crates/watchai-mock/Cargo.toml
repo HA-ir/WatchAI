@@ -1,0 +1,12 @@
+[package]
+name = "watchai-mock"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+watchai-core = { path = "../watchai-core" }
+watchai-ipc = { path = "../watchai-ipc" }
+tokio.workspace = true
+zbus.workspace = true
+chrono.workspace = true
