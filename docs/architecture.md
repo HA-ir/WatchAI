@@ -89,14 +89,15 @@ When the daemon appears on D-Bus (`NameOwnerChanged`), the client initiates an a
 4. Attach D-Bus signal listeners (`AggregateStateChanged`, `SessionAdded`, `SessionUpdated`, `SessionRemoved`).
 5. Mark connection online (`CONNECTED`), replace cached cards with fresh state, and resume live duration ticking.
 
-Each handshake is bounded by a strict asynchronous **5.0-second client-side timeout** (`HANDSHAKE_TIMEOUT_MS = 5000`). If any step times out or fails, the handshake is aborted, the proxy reference is discarded, and a backoff retry is scheduled.
+- **5.0-Second Timeout**: Each handshake is bounded by a strict asynchronous **5.0-second client-side timeout** (`HANDSHAKE_TIMEOUT_MS = 5000`). If any step times out or fails, the handshake is aborted, the proxy reference is discarded, and a backoff retry is scheduled.
+- **Generation-Based Invalidation**: Each handshake is stamped with a monotonic generation token (`_handshakeGeneration`). Any timeout, disconnect, or extension `disable()` increments the generation, instantly invalidating in-flight proxy callbacks and guaranteeing that stale responses can never mark the client online or mutate UI state.
 
 ### 4. Jittered Exponential Backoff & Crash Loop Defense
 To prevent D-Bus message storms and CPU thrashing during daemon crash loops:
 - **Base Interval**: 1.0s initial delay.
 - **Multiplier**: 2.0x per consecutive failure.
-- **Maximum Ceiling**: 30.0s clamp.
-- **Randomized Jitter**: $\pm 20\%$ offset applied to each interval:
-  $$\text{Delay} = \min(30000\text{ms}, 1000\text{ms} \times 2.0^n) \times [0.80, 1.20]$$
+- **Hard Ceiling**: 30.0s clamp enforced *after* jitter calculation:
+  $$\text{Delay} = \min\left(30000\text{ms}, \text{round}\left(\min(30000\text{ms}, 1000\text{ms} \times 2.0^n) \times [0.80, 1.20]\right)\right)$$
+- **Randomized Jitter**: $\pm 20\%$ offset applied to each interval (effective delay strictly bounded between 800ms and 30,000ms).
 - **Success Reset**: A complete, successful handshake resets consecutive failures to 0.
 - **Silent Recovery**: The client suppresses desktop notification alerts during crash loops and never executes external process managers.

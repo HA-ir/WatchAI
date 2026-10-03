@@ -22,7 +22,7 @@ function assertEq(actual, expected, message) {
 }
 
 // ============================================================================
-// 1. Verify Timing Constants
+// 1. Verify Timing Constants & Strict Ceiling (Section 1)
 // ============================================================================
 assertEq(HANDSHAKE_TIMEOUT_MS, 5000, 'Handshake timeout must be exactly 5000ms (5.0s)');
 assertEq(INITIAL_INTERVAL_MS, 1000, 'Initial reconnect interval must be exactly 1000ms (1.0s)');
@@ -30,8 +30,14 @@ assertEq(MAX_INTERVAL_MS, 30000, 'Maximum reconnect interval ceiling must be 300
 assertEq(MULTIPLIER, 2.0, 'Backoff multiplier must be 2.0');
 assertEq(JITTER_RATIO, 0.20, 'Jitter ratio must be 20% (±20%)');
 
+// Verify jitter bounds
+const minJitterBound = 1.0 - JITTER_RATIO;
+const maxJitterBound = 1.0 + JITTER_RATIO;
+assertEq(minJitterBound, 0.80, 'Jitter lower bound must be exactly 0.80');
+assertEq(maxJitterBound, 1.20, 'Jitter upper bound must be exactly 1.20');
+
 // ============================================================================
-// 2. Verify Jittered Exponential Backoff Calculations (T087)
+// 2. Verify Jittered Exponential Backoff Calculations & Ceiling (Section 1)
 // ============================================================================
 const minRng = () => 0.0;
 const midRng = () => 0.5;
@@ -61,8 +67,18 @@ assertEq(computeBackoffDelay(4, midRng), 16000, 'Attempt 4 median must be 16000m
 // Attempt 5+: Clamped at 30000ms ceiling!
 assertEq(computeBackoffDelay(5, midRng), 30000, 'Attempt 5 must be clamped to 30000ms ceiling');
 assertEq(computeBackoffDelay(5, minRng), 24000, 'Attempt 5 min jitter must be 24000ms (-20%)');
-assertEq(computeBackoffDelay(5, maxRng), 36000, 'Attempt 5 max jitter must be 36000ms (+20%)');
+assertEq(computeBackoffDelay(5, maxRng), 30000, 'Attempt 5 max jitter must be clamped to 30000ms ceiling');
 assertEq(computeBackoffDelay(10, midRng), 30000, 'Attempt 10 must remain clamped to 30000ms ceiling');
+assertEq(computeBackoffDelay(10, maxRng), 30000, 'Attempt 10 max jitter must remain clamped to 30000ms ceiling');
+
+// Strict mathematical proof: Delay NEVER exceeds 30000ms across all failure counts and RNG values
+for (let n = 0; n <= 25; n++) {
+    for (let r = 0.0; r <= 1.0; r += 0.1) {
+        const delay = computeBackoffDelay(n, () => r);
+        assert(delay <= 30000, `Delay must never exceed 30000ms (got ${delay} at n=${n}, r=${r})`);
+        assert(delay >= 800, `Delay must never be lower than minimum first-retry jitter 800ms (got ${delay})`);
+    }
+}
 
 // Success reset verification: passing 0 after consecutive failures resets backoff
 let failures = 5;
@@ -70,10 +86,10 @@ assertEq(computeBackoffDelay(failures, midRng), 30000, 'High failures evaluate t
 failures = 0; // Reset upon successful handshake!
 assertEq(computeBackoffDelay(failures, midRng), 1000, 'Reset failures must return to 1000ms base');
 
-print('✓ Jittered exponential backoff and timeout constants verified.');
+print('✓ Jittered exponential backoff, exact constants, and 30000ms ceiling verified.');
 
 // ============================================================================
-// 3. Verify ConnectionState Machine Transitions (T078)
+// 3. Verify ConnectionState Machine Transitions (Section 2)
 // ============================================================================
 let state = ConnectionState.DISCONNECTED;
 assertEq(state, 'DISCONNECTED', 'Initial state is DISCONNECTED');
@@ -97,7 +113,7 @@ assertEq(state, 'CONNECTED', 'Successful reconnect transitions back to CONNECTED
 print('✓ Client connection state machine transitions verified.');
 
 // ============================================================================
-// 4. Verify Defensive D-Bus Tuple Unpacking (T090)
+// 4. Verify Defensive D-Bus Tuple Unpacking (Section 10)
 // ============================================================================
 const validTuple = [
     'sess-uuid-1234',
@@ -128,7 +144,7 @@ assertEq(unpackSessionDto(['only', 'four', 'elements', 'here']), null, 'short ar
 print('✓ Defensive D-Bus tuple unpacking verified.');
 
 // ============================================================================
-// 5. In-flight Cached Presentation State & Timer Pausing (T079)
+// 5. In-flight Cached Presentation State & Timer Pausing (Section 4)
 // ============================================================================
 class MockSessionCard {
     constructor(id, initialState = 'WORKING') {
@@ -181,7 +197,7 @@ assertEq(card.timerTicks, 2, 'Live card resumes duration ticking upon reconnect'
 print('✓ In-flight cached presentation state and timer pausing verified.');
 
 // ============================================================================
-// 6. 5-Step Handshake & Timeout Simulation (T080)
+// 6. 5-Step Handshake & Timeout Simulation (Section 3)
 // ============================================================================
 class MockHandshakeCoordinator {
     constructor(timeoutMs = HANDSHAKE_TIMEOUT_MS) {
@@ -234,86 +250,116 @@ assertEq(slowHandshake.isOnline, false, 'Client must NOT be marked online on tim
 print('✓ 5-step asynchronous reconnection handshake and 5.0s timeout verified.');
 
 // ============================================================================
-// 7. Lifecycle Interleaving Scenarios (T081)
+// 7. Stale Handshake & Race Safety Simulation (Sequences A - F) (Section 2)
 // ============================================================================
-class MockExtensionLifecycle {
+class MockRaceSafeClient {
     constructor() {
-        this.clientState = ConnectionState.DISCONNECTED;
-        this.popoverOpen = false;
-        this.cards = new Map();
-        this.signalListenersAttached = false;
+        this.connectionState = ConnectionState.DISCONNECTED;
+        this.generation = 0;
+        this.isDestroyed = false;
+        this.activeSignalListeners = 0;
+        this.sessions = [];
+        this.pendingTimers = new Set();
     }
 
-    startExtension(daemonAlreadyRunning) {
-        this.clientState = ConnectionState.CONNECTING;
-        if (daemonAlreadyRunning) {
-            this.signalListenersAttached = true;
-            this.clientState = ConnectionState.CONNECTED;
-        } else {
-            // Daemon not running yet -> transitions to RECONNECTING
-            this.clientState = ConnectionState.RECONNECTING;
+    connect() {
+        if (this.isDestroyed) return;
+        this.connectionState = ConnectionState.CONNECTING;
+        const currentGen = ++this.generation;
+        return currentGen;
+    }
+
+    handleDisconnect() {
+        this.generation += 1; // Invalidate all pending in-flight callbacks!
+        this.connectionState = ConnectionState.RECONNECTING;
+        this.activeSignalListeners = 0; // Detach signals
+    }
+
+    resolveHandshake(gen, aggregateState, sessions) {
+        // Strict guard: Drop if destroyed or if generation does not match!
+        if (this.isDestroyed || this.generation !== gen) {
+            return false; // STALE CALLBACK DROPPED!
         }
+        this.activeSignalListeners = 4;
+        this.sessions = sessions;
+        this.connectionState = ConnectionState.CONNECTED;
+        return true;
     }
 
-    onDaemonAppeared() {
-        this.clientState = ConnectionState.CONNECTING;
-        // Complete handshake:
-        this.signalListenersAttached = true;
-        this.clientState = ConnectionState.CONNECTED;
-    }
-
-    onDaemonDisappeared() {
-        this.signalListenersAttached = false;
-        this.clientState = ConnectionState.RECONNECTING;
-        for (const card of this.cards.values()) {
-            card.setOfflineMode(true);
-        }
-    }
-
-    openPopover() {
-        this.popoverOpen = true;
-    }
-
-    closePopover() {
-        this.popoverOpen = false;
+    disable() {
+        this.isDestroyed = true;
+        this.generation += 1;
+        this.connectionState = ConnectionState.DISCONNECTED;
+        this.activeSignalListeners = 0;
+        this.pendingTimers.clear();
     }
 }
 
-// Scenario A: Extension starting before daemon
-const scenarioA = new MockExtensionLifecycle();
-scenarioA.startExtension(false);
-assertEq(scenarioA.clientState, ConnectionState.RECONNECTING, 'Starts in RECONNECTING when daemon absent');
-assertEq(scenarioA.signalListenersAttached, false, 'No signals attached yet');
+// Sequence A: CONNECTED -> daemon disappears -> reconnect starts -> daemon returns -> handshake succeeds
+const clientA = new MockRaceSafeClient();
+const genA1 = clientA.connect();
+clientA.resolveHandshake(genA1, 'IDLE', []);
+assertEq(clientA.connectionState, ConnectionState.CONNECTED, 'Seq A: Initial connect');
+clientA.handleDisconnect();
+assertEq(clientA.connectionState, ConnectionState.RECONNECTING, 'Seq A: Disconnected');
+const genA2 = clientA.connect();
+const resolvedA2 = clientA.resolveHandshake(genA2, 'WORKING', [{ id: 's1' }]);
+assertEq(resolvedA2, true, 'Seq A: Reconnect resolves');
+assertEq(clientA.connectionState, ConnectionState.CONNECTED, 'Seq A: Client marked online');
 
-// Daemon appears later
-scenarioA.onDaemonAppeared();
-assertEq(scenarioA.clientState, ConnectionState.CONNECTED, 'Transitions to CONNECTED once daemon starts');
-assertEq(scenarioA.signalListenersAttached, true, 'Signals attached on startup');
+// Sequence B: reconnect attempt starts -> daemon disappears again -> previous handshake resolves late
+const clientB = new MockRaceSafeClient();
+const genB1 = clientB.connect();
+assertEq(clientB.connectionState, ConnectionState.CONNECTING, 'Seq B: Connecting');
+clientB.handleDisconnect(); // Disappears again!
+assertEq(clientB.connectionState, ConnectionState.RECONNECTING, 'Seq B: Reconnecting');
+// Attempt B1 resolves late now:
+const resolvedB1 = clientB.resolveHandshake(genB1, 'WORKING', [{ id: 'stale' }]);
+assertEq(resolvedB1, false, 'Seq B: Late handshake callback must be rejected');
+assertEq(clientB.connectionState, ConnectionState.RECONNECTING, 'Seq B: Client remains RECONNECTING');
+assertEq(clientB.sessions.length, 0, 'Seq B: Stale session data rejected');
 
-// Scenario B: Daemon starting before extension
-const scenarioB = new MockExtensionLifecycle();
-scenarioB.startExtension(true);
-assertEq(scenarioB.clientState, ConnectionState.CONNECTED, 'Immediately CONNECTED if daemon already running');
-assertEq(scenarioB.signalListenersAttached, true, 'Signals attached immediately');
+// Sequence C: reconnect attempt 1 -> timeout -> reconnect attempt 2 starts -> attempt 1 resolves late
+const clientC = new MockRaceSafeClient();
+const genC1 = clientC.connect();
+clientC.handleDisconnect(); // Timeout triggers disconnect/retry
+const genC2 = clientC.connect(); // Attempt 2 begins
+assertEq(clientC.generation, 3, 'Seq C: Generation advanced to 3');
+// Attempt 1 resolves late:
+const resolvedC1 = clientC.resolveHandshake(genC1, 'IDLE', [{ id: 'from-attempt-1' }]);
+assertEq(resolvedC1, false, 'Seq C: Late attempt 1 rejected');
+// Attempt 2 resolves on time:
+const resolvedC2 = clientC.resolveHandshake(genC2, 'IDLE', [{ id: 'from-attempt-2' }]);
+assertEq(resolvedC2, true, 'Seq C: Current attempt 2 accepted');
+assertEq(clientC.sessions[0].id, 'from-attempt-2', 'Seq C: Authoritative state applied');
 
-// Scenario C: Daemon disappearing/reappearing while popover is open
-const scenarioC = new MockExtensionLifecycle();
-scenarioC.startExtension(true);
-scenarioC.cards.set('s1', new MockSessionCard('s1', 'WORKING'));
-scenarioC.openPopover();
+// Sequence D: daemon appears/disappears/appears rapidly
+const clientD = new MockRaceSafeClient();
+for (let i = 0; i < 5; i++) {
+    clientD.connect();
+    clientD.handleDisconnect();
+}
+const finalGenD = clientD.connect();
+const finalResolvedD = clientD.resolveHandshake(finalGenD, 'IDLE', []);
+assertEq(finalResolvedD, true, 'Seq D: Only final generation accepted');
+assertEq(clientD.connectionState, ConnectionState.CONNECTED, 'Seq D: Successfully connected');
 
-// Daemon crashes while popover is open!
-scenarioC.onDaemonDisappeared();
-assertEq(scenarioC.clientState, ConnectionState.RECONNECTING, 'Reconnecting while popover open');
-assertEq(scenarioC.signalListenersAttached, false, 'Signals detached on disconnect');
-assertEq(scenarioC.cards.get('s1').isCached, true, 'Rendered card transitioned to CACHED');
+// Sequence E: extension disable() while handshake is in flight
+const clientE = new MockRaceSafeClient();
+const genE1 = clientE.connect();
+clientE.disable();
+assertEq(clientE.isDestroyed, true, 'Seq E: Client destroyed');
+const resolvedE1 = clientE.resolveHandshake(genE1, 'WORKING', [{ id: 'stale' }]);
+assertEq(resolvedE1, false, 'Seq E: Callback dropped on destroyed client');
+assertEq(clientE.connectionState, ConnectionState.DISCONNECTED, 'Seq E: Remains DISCONNECTED');
 
-// Daemon recovers
-scenarioC.onDaemonAppeared();
-assertEq(scenarioC.clientState, ConnectionState.CONNECTED, 'Reconnected successfully');
-assertEq(scenarioC.signalListenersAttached, true, 'Signals re-established');
-scenarioC.cards.get('s1').setOfflineMode(false);
-assertEq(scenarioC.cards.get('s1').isCached, false, 'Rendered card returned to live state');
+// Sequence F: extension disable() while backoff timer is pending
+const clientF = new MockRaceSafeClient();
+clientF.handleDisconnect();
+clientF.pendingTimers.add(99);
+clientF.disable();
+assertEq(clientF.pendingTimers.size, 0, 'Seq F: All pending timers purged');
+assertEq(clientF.isDestroyed, true, 'Seq F: Client marked destroyed');
 
-print('✓ Lifecycle interleaving scenarios (A, B, C) verified.');
+print('✓ Stale handshake & race safety sequences (A, B, C, D, E, F) verified.');
 print('All reconnect and crash recovery GJS tests passed successfully!');

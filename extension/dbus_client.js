@@ -57,13 +57,15 @@ export class WatchAIDbusClient {
         this._sessionAddedId = null;
         this._sessionUpdatedId = null;
         this._sessionRemovedId = null;
-        this._ownerChangedId = null;
+        this._ownerChangedSubId = null;
         this._reconnectTimer = null;
         this._handshakeTimer = null;
         this._consecutiveFailures = 0;
+        this._handshakeGeneration = 0;
         this._isDestroyed = false;
         this._connectionState = ConnectionState.DISCONNECTED;
 
+        this._subscribeToNameOwnerChanged();
         this._connect();
     }
 
@@ -71,12 +73,49 @@ export class WatchAIDbusClient {
         return this._connectionState;
     }
 
-    _startHandshakeTimeout() {
+    _subscribeToNameOwnerChanged() {
+        // Monitor D-Bus broker NameOwnerChanged signal specifically for org.freedesktop.WatchAI
+        try {
+            this._ownerChangedSubId = Gio.DBus.session.signal_subscribe(
+                'org.freedesktop.DBus',
+                'org.freedesktop.DBus',
+                'NameOwnerChanged',
+                '/org/freedesktop/DBus',
+                'org.freedesktop.WatchAI',
+                Gio.DBusSignalFlags.NONE,
+                (_conn, _sender, _path, _iface, _signal, params) => {
+                    if (this._isDestroyed) return;
+                    const unpacked = params.deep_unpack();
+                    if (!Array.isArray(unpacked) || unpacked.length < 3) return;
+                    const [name, _oldOwner, newOwner] = unpacked;
+                    if (name !== 'org.freedesktop.WatchAI') return;
+
+                    if (newOwner === '') {
+                        // Daemon disappeared
+                        this._handleDisconnect();
+                    } else if (this._connectionState !== ConnectionState.CONNECTED) {
+                        // Daemon appeared: cancel pending backoff and initiate handshake immediately
+                        if (this._reconnectTimer) {
+                            GLib.source_remove(this._reconnectTimer);
+                            this._reconnectTimer = null;
+                        }
+                        this._connect();
+                    }
+                }
+            );
+        } catch {
+            // Signal subscription fallback
+        }
+    }
+
+    _startHandshakeTimeout(gen) {
         this._clearHandshakeTimeout();
         this._handshakeTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, HANDSHAKE_TIMEOUT_MS, () => {
             this._handshakeTimer = null;
-            // Handshake exceeded 5.0 seconds -> abort and retry with backoff
-            this._handleDisconnect();
+            if (!this._isDestroyed && this._handshakeGeneration === gen) {
+                // Handshake exceeded 5.0 seconds -> abort and retry with backoff
+                this._handleDisconnect();
+            }
             return GLib.SOURCE_REMOVE;
         });
     }
@@ -91,8 +130,15 @@ export class WatchAIDbusClient {
     _connect() {
         if (this._isDestroyed) return;
 
+        // Cancel any pending reconnect timer
+        if (this._reconnectTimer) {
+            GLib.source_remove(this._reconnectTimer);
+            this._reconnectTimer = null;
+        }
+
+        const gen = ++this._handshakeGeneration;
         this._connectionState = ConnectionState.CONNECTING;
-        this._startHandshakeTimeout();
+        this._startHandshakeTimeout(gen);
 
         try {
             new WatchAIProxyWrapper(
@@ -100,41 +146,34 @@ export class WatchAIDbusClient {
                 'org.freedesktop.WatchAI',
                 '/org/freedesktop/WatchAI',
                 (initProxy, error) => {
+                    if (this._isDestroyed || this._handshakeGeneration !== gen) return;
+
                     if (error || !initProxy || !initProxy.g_name_owner) {
                         this._handleDisconnect();
                         return;
                     }
-                    this._onProxyReady(initProxy);
+                    this._onProxyReady(initProxy, gen);
                 }
             );
         } catch {
-            this._handleDisconnect();
+            if (!this._isDestroyed && this._handshakeGeneration === gen) {
+                this._handleDisconnect();
+            }
         }
     }
 
-    _onProxyReady(proxy) {
-        if (this._isDestroyed) return;
+    _onProxyReady(proxy, gen) {
+        if (this._isDestroyed || this._handshakeGeneration !== gen) return;
 
+        this._detachSignalListeners();
         this._proxy = proxy;
-
-        // Monitor D-Bus NameOwnerChanged for daemon departures and arrivals
-        this._ownerChangedId = this._proxy.connect('notify::g-name-owner', () => {
-            if (!this._proxy || !this._proxy.g_name_owner) {
-                this._handleDisconnect();
-            } else if (this._connectionState !== ConnectionState.CONNECTED) {
-                // Daemon reappeared: cancel pending backoff and initiate handshake
-                if (this._reconnectTimer) {
-                    GLib.source_remove(this._reconnectTimer);
-                    this._reconnectTimer = null;
-                }
-                this._connect();
-            }
-        });
 
         // Execute the 5-step synchronization handshake:
         // Step 1: Proxy acquired
         // Step 2: Query GetAggregateState
         this._proxy.GetAggregateStateRemote((aggResult, aggError) => {
+            if (this._isDestroyed || this._handshakeGeneration !== gen) return;
+
             if (aggError || !aggResult) {
                 this._handleDisconnect();
                 return;
@@ -151,6 +190,8 @@ export class WatchAIDbusClient {
 
             // Step 3: Query GetSessions
             this._proxy.GetSessionsRemote((sessResult, sessError) => {
+                if (this._isDestroyed || this._handshakeGeneration !== gen) return;
+
                 if (sessError || !sessResult) {
                     this._handleDisconnect();
                     return;
@@ -247,13 +288,10 @@ export class WatchAIDbusClient {
     }
 
     _handleDisconnect() {
+        // Invalidate all in-flight handshakes immediately
+        this._handshakeGeneration += 1;
         this._clearHandshakeTimeout();
         this._detachSignalListeners();
-
-        if (this._ownerChangedId && this._proxy) {
-            this._proxy.disconnect(this._ownerChangedId);
-            this._ownerChangedId = null;
-        }
         this._proxy = null;
 
         this._connectionState = ConnectionState.RECONNECTING;
@@ -314,6 +352,7 @@ export class WatchAIDbusClient {
 
     destroy() {
         this._isDestroyed = true;
+        this._handshakeGeneration += 1;
         this._clearHandshakeTimeout();
 
         if (this._reconnectTimer) {
@@ -321,13 +360,12 @@ export class WatchAIDbusClient {
             this._reconnectTimer = null;
         }
 
-        this._detachSignalListeners();
-
-        if (this._ownerChangedId && this._proxy) {
-            this._proxy.disconnect(this._ownerChangedId);
-            this._ownerChangedId = null;
+        if (this._ownerChangedSubId) {
+            Gio.DBus.session.signal_unsubscribe(this._ownerChangedSubId);
+            this._ownerChangedSubId = null;
         }
 
+        this._detachSignalListeners();
         this._proxy = null;
         this._connectionState = ConnectionState.DISCONNECTED;
     }

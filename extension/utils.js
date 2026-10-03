@@ -50,6 +50,7 @@ export const MULTIPLIER = 2.0;
 export const JITTER_RATIO = 0.20;
 
 /// Compute exponential backoff delay with ±20% jitter.
+/// Strictly capped at MAX_INTERVAL_MS (30,000 ms) regardless of jitter variation.
 export function computeBackoffDelay(consecutiveFailures, randomFn = Math.random) {
     const base = Math.min(
         MAX_INTERVAL_MS,
@@ -58,7 +59,7 @@ export function computeBackoffDelay(consecutiveFailures, randomFn = Math.random)
     const minJitter = 1.0 - JITTER_RATIO;
     const maxJitter = 1.0 + JITTER_RATIO;
     const factor = minJitter + (maxJitter - minJitter) * randomFn();
-    return Math.round(base * factor);
+    return Math.min(MAX_INTERVAL_MS, Math.round(base * factor));
 }
 
 /// Defensively unpack a D-Bus session struct tuple (sssssssus) into an object.

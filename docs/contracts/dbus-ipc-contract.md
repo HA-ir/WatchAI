@@ -108,18 +108,18 @@ Step 4: Attach Signals       ──► Connects AggregateStateChanged & Session*
 Step 5: Mark Online          ──► Restores live indicator & unfreezes timers
 ```
 
-### 4.3 5.0-Second Handshake Deadline
-Each reconnection handshake is bounded by a client-side asynchronous timeout of **5.0 seconds** (`HANDSHAKE_TIMEOUT_MS = 5000`). If the daemon hangs, stalls, or fails to complete all steps before the deadline:
-1. Handshake is cancelled.
+### 4.3 5.0-Second Handshake Deadline & Generation Invalidation
+Each reconnection handshake is bounded by a client-side asynchronous timeout of **5.0 seconds** (`HANDSHAKE_TIMEOUT_MS = 5000`) and protected by a monotonic generation token (`_handshakeGeneration`). If the daemon hangs, stalls, or disconnects before completion:
+1. Generation token increments, instantly invalidating all in-flight asynchronous callbacks.
 2. In-flight proxy references are discarded.
 3. UI remains safely in `CACHED / OFFLINE` mode without freezing Mutter.
-4. Retry is scheduled with exponential backoff.
+4. Retry is scheduled with jittered exponential backoff.
 
 ### 4.4 Jittered Exponential Backoff
-$$\text{Delay} = \min(30000\text{ms}, 1000\text{ms} \times 2.0^n) \times [0.80, 1.20]$$
+$$\text{Delay} = \min\left(30000\text{ms}, \text{round}\left(\min(30000\text{ms}, 1000\text{ms} \times 2.0^n) \times [0.80, 1.20]\right)\right)$$
 - **Initial Interval**: 1.0s (1000ms).
 - **Multiplier**: 2.0x per consecutive failure.
-- **Ceiling**: 30.0s (30000ms).
+- **Hard Ceiling**: 30.0s (30,000ms) enforced after jitter calculation (delays strictly bounded between 800ms and 30,000ms).
 - **Jitter**: $\pm 20\%$ randomized variation.
 - **Success Reset**: Successfully completing Step 5 resets consecutive failures to 0.
 

@@ -94,7 +94,10 @@ async fn test_surviving_process_rediscovery_and_deterministic_id() {
     // Compute aggregate state: IDLE, zero error alerts
     let calc = compute_aggregate_state(&registry.list().await, Utc::now());
     assert_eq!(calc.aggregate_state, LifecycleState::Idle);
-    assert_eq!(calc.error_session_count, 0, "Zero false ERROR alerts emitted");
+    assert_eq!(
+        calc.error_session_count, 0,
+        "Zero false ERROR alerts emitted"
+    );
 }
 
 #[test]
