@@ -35,3 +35,48 @@ export function getStatePriority(state) {
         default: return 0;
     }
 }
+
+export const ConnectionState = {
+    DISCONNECTED: 'DISCONNECTED',
+    CONNECTING: 'CONNECTING',
+    CONNECTED: 'CONNECTED',
+    RECONNECTING: 'RECONNECTING',
+};
+
+export const HANDSHAKE_TIMEOUT_MS = 5000;
+export const INITIAL_INTERVAL_MS = 1000;
+export const MAX_INTERVAL_MS = 30000;
+export const MULTIPLIER = 2.0;
+export const JITTER_RATIO = 0.20;
+
+/// Compute exponential backoff delay with ±20% jitter.
+/// Strictly capped at MAX_INTERVAL_MS (30,000 ms) regardless of jitter variation.
+export function computeBackoffDelay(consecutiveFailures, randomFn = Math.random) {
+    const base = Math.min(
+        MAX_INTERVAL_MS,
+        INITIAL_INTERVAL_MS * Math.pow(MULTIPLIER, consecutiveFailures)
+    );
+    const minJitter = 1.0 - JITTER_RATIO;
+    const maxJitter = 1.0 + JITTER_RATIO;
+    const factor = minJitter + (maxJitter - minJitter) * randomFn();
+    return Math.min(MAX_INTERVAL_MS, Math.round(base * factor));
+}
+
+/// Defensively unpack a D-Bus session struct tuple (sssssssus) into an object.
+/// Returns null if the payload is malformed or invalid.
+export function unpackSessionDto(s) {
+    if (!Array.isArray(s) || s.length < 9) {
+        return null;
+    }
+    return {
+        sessionId: String(s[0] || ''),
+        providerId: String(s[1] || ''),
+        providerDisplayName: String(s[2] || ''),
+        projectName: String(s[3] || ''),
+        currentState: String(s[4] || 'IDLE'),
+        startedAt: String(s[5] || ''),
+        stateEnteredAt: String(s[6] || ''),
+        processId: Number(s[7]) || 0,
+        activeToolCategory: String(s[8] || ''),
+    };
+}

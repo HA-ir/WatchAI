@@ -18,3 +18,7 @@ path = "us1_single_session_flow_test.rs"
 [[test]]
 name = "quickstart_scenarios_test"
 path = "quickstart_scenarios_test.rs"
+
+[[test]]
+name = "crash_recovery_test"
+path = "crash_recovery_test.rs"

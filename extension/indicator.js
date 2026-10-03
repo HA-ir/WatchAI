@@ -110,11 +110,13 @@ class WatchAIIndicator extends PanelMenu.Button {
     }
 
     setDisconnected() {
-        this.updateState('IDLE', 0, 0, 0);
-        this._icon.style_class = 'system-status-icon watchai-status-icon watchai-state-idle';
-        this.set_accessible_name('WatchAI: Daemon offline');
+        this._currentState = 'OFFLINE';
+        this._icon.icon_name = 'system-run-symbolic';
+        this._icon.style_class = 'system-status-icon watchai-status-icon watchai-state-offline';
+        this._countLabel.visible = false;
+        this.set_accessible_name('WatchAI daemon offline');
         if (this._popover) {
-            this._popover.setSessions([]);
+            this._popover.setOfflineMode(true);
         }
     }
 

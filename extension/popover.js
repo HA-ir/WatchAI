@@ -9,6 +9,7 @@ export { formatDuration, getStatePriority };
 export class WatchAISessionCard {
     constructor(session) {
         this.session = session;
+        this._isOffline = false;
         this.actor = new St.BoxLayout({
             vertical: true,
             style_class: `watchai-session-card watchai-card-${session.currentState.toLowerCase()}`,
@@ -67,12 +68,33 @@ export class WatchAISessionCard {
         this.actor.add_child(bottomRow);
     }
 
+    setOfflineMode(isOffline) {
+        this._isOffline = isOffline;
+        if (isOffline) {
+            this._stateBadge.text = `${this.session.currentState} [CACHED]`;
+            this._stateBadge.style_class = 'watchai-state-badge watchai-badge-cached';
+            this.actor.style_class = `watchai-session-card watchai-card-${this.session.currentState.toLowerCase()} watchai-card-cached`;
+        } else {
+            this._stateBadge.text = this.session.currentState;
+            this._stateBadge.style_class = `watchai-state-badge watchai-badge-${this.session.currentState.toLowerCase()}`;
+            this.actor.style_class = `watchai-session-card watchai-card-${this.session.currentState.toLowerCase()}`;
+            this.updateDuration();
+        }
+    }
+
     update(session) {
         this.session = session;
         this._providerLabel.text = session.providerDisplayName || session.providerId;
-        this._stateBadge.text = session.currentState;
-        this._stateBadge.style_class = `watchai-state-badge watchai-badge-${session.currentState.toLowerCase()}`;
-        this.actor.style_class = `watchai-session-card watchai-card-${session.currentState.toLowerCase()}`;
+
+        if (this._isOffline) {
+            this._stateBadge.text = `${session.currentState} [CACHED]`;
+            this._stateBadge.style_class = 'watchai-state-badge watchai-badge-cached';
+            this.actor.style_class = `watchai-session-card watchai-card-${session.currentState.toLowerCase()} watchai-card-cached`;
+        } else {
+            this._stateBadge.text = session.currentState;
+            this._stateBadge.style_class = `watchai-state-badge watchai-badge-${session.currentState.toLowerCase()}`;
+            this.actor.style_class = `watchai-session-card watchai-card-${session.currentState.toLowerCase()}`;
+        }
 
         let detailText = `📂 ${session.projectName || 'workspace'}`;
         if (session.processId && session.processId > 0) {
@@ -86,6 +108,7 @@ export class WatchAISessionCard {
     }
 
     updateDuration() {
+        if (this._isOffline) return;
         this._durationLabel.text = formatDuration(this.session.startedAt);
     }
 }
@@ -95,6 +118,7 @@ export class WatchAISessionPopover {
         this._menu = menu;
         this._cards = new Map(); // sessionId -> WatchAISessionCard
         this._durationTimerId = null;
+        this._isOffline = false;
 
         this._buildUI();
     }
@@ -134,7 +158,7 @@ export class WatchAISessionPopover {
 
         // Start/Stop duration timer on menu open/close
         this._openStateChangedId = this._menu.connect('open-state-changed', (_menu, isOpen) => {
-            if (isOpen) {
+            if (isOpen && !this._isOffline) {
                 this._startDurationTimer();
             } else {
                 this._stopDurationTimer();
@@ -144,10 +168,35 @@ export class WatchAISessionPopover {
         this._updateEmptyState();
     }
 
+    setOfflineMode(isOffline) {
+        this._isOffline = isOffline;
+        if (isOffline) {
+            this._stopDurationTimer();
+            for (const card of this._cards.values()) {
+                card.setOfflineMode(true);
+            }
+            this._emptyLabel.text = 'WatchAI daemon offline (no sessions cached).';
+        } else {
+            for (const card of this._cards.values()) {
+                card.setOfflineMode(false);
+            }
+            this._emptyLabel.text = 'No active coding agents observed.';
+            if (this._menu.isOpen) {
+                this._startDurationTimer();
+            }
+        }
+    }
+
     _startDurationTimer() {
         this._stopDurationTimer();
+        if (this._isOffline) return;
+
         this._tickDurations();
         this._durationTimerId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 1, () => {
+            if (this._isOffline) {
+                this._stopDurationTimer();
+                return GLib.SOURCE_REMOVE;
+            }
             this._tickDurations();
             return GLib.SOURCE_CONTINUE;
         });
@@ -161,6 +210,7 @@ export class WatchAISessionPopover {
     }
 
     _tickDurations() {
+        if (this._isOffline) return;
         for (const card of this._cards.values()) {
             card.updateDuration();
         }
@@ -190,7 +240,7 @@ export class WatchAISessionPopover {
     }
 
     setSessions(sessions) {
-        // Clear existing cards
+        // Clear existing cards and replace with fresh authoritative state
         for (const card of this._cards.values()) {
             this._cardsSection.actor.remove_child(card.actor);
         }
@@ -198,6 +248,10 @@ export class WatchAISessionPopover {
 
         for (const s of sessions) {
             this.addSession(s);
+        }
+
+        if (!this._isOffline && this._menu.isOpen) {
+            this._startDurationTimer();
         }
     }
 
@@ -208,6 +262,9 @@ export class WatchAISessionPopover {
         }
 
         const card = new WatchAISessionCard(session);
+        if (this._isOffline) {
+            card.setOfflineMode(true);
+        }
         this._cards.set(session.sessionId, card);
         this._cardsSection.actor.add_child(card.actor);
 

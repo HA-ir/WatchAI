@@ -44,6 +44,11 @@
     color: #9a9996;
 }
 
+.watchai-state-offline {
+    opacity: 0.35;
+    color: #77767b;
+}
+
 /* Session Popover Styles */
 .watchai-popover-header {
     font-weight: bold;
@@ -79,6 +84,11 @@
 
 .watchai-session-card:hover {
     background-color: rgba(255, 255, 255, 0.12);
+}
+
+.watchai-card-cached {
+    opacity: 0.65;
+    border-style: dashed;
 }
 
 .watchai-card-top-row {
@@ -170,4 +180,9 @@
 .watchai-badge-unknown {
     background-color: rgba(154, 153, 150, 0.2);
     color: #9a9996;
+}
+
+.watchai-badge-cached {
+    background-color: rgba(119, 118, 123, 0.35);
+    color: #deddda;
 }
