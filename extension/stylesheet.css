@@ -1,0 +1,73 @@
+/* WatchAI Top-Bar Indicator Styles */
+
+.watchai-indicator-box {
+    spacing: 4px;
+}
+
+.watchai-status-icon {
+    icon-size: 16px;
+}
+
+/* State Accents and Icon Coloring */
+.watchai-state-idle {
+    opacity: 0.55;
+    color: #9a9996;
+}
+
+.watchai-state-starting {
+    color: #3584e4;
+}
+
+.watchai-state-working {
+    color: #f6d32d;
+}
+
+.watchai-state-waiting {
+    color: #e01b24;
+    font-weight: bold;
+}
+
+.watchai-state-success {
+    color: #33d17a;
+}
+
+.watchai-state-error {
+    color: #c01c28;
+    font-weight: bold;
+}
+
+.watchai-state-cancelled {
+    color: #77767b;
+}
+
+.watchai-state-unknown {
+    color: #9a9996;
+}
+
+/* Session Popover Styles */
+.watchai-popover-header {
+    font-weight: bold;
+    font-size: 13px;
+    padding: 8px 12px;
+}
+
+.watchai-session-card {
+    padding: 8px 12px;
+    margin: 4px 6px;
+    border-radius: 6px;
+    background-color: rgba(255, 255, 255, 0.05);
+}
+
+.watchai-session-card:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.watchai-session-title {
+    font-weight: bold;
+    font-size: 12px;
+}
+
+.watchai-session-subtitle {
+    font-size: 11px;
+    opacity: 0.75;
+}

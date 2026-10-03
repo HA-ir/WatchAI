@@ -1,0 +1,13 @@
+{
+  "uuid": "watchai@gnome.org",
+  "name": "WatchAI Indicator",
+  "description": "Monitors local AI coding agents and displays real-time activity and lifecycle states in the GNOME top bar.",
+  "shell-version": [
+    "45",
+    "46",
+    "47"
+  ],
+  "url": "https://github.com/watchai/watchai",
+  "settings-schema": "org.gnome.shell.extensions.watchai",
+  "version": 1
+}

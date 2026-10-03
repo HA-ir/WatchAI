@@ -1,0 +1,13 @@
+[package]
+name = "watchai-ipc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+watchai-core = { path = "../watchai-core" }
+zbus.workspace = true
+tokio.workspace = true
+serde.workspace = true
+chrono.workspace = true
+tracing.workspace = true

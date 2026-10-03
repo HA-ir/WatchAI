@@ -1,0 +1,15 @@
+[package]
+name = "watchai-daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+watchai-core = { path = "../watchai-core" }
+watchai-adapters = { path = "../watchai-adapters" }
+watchai-ipc = { path = "../watchai-ipc" }
+tokio.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+zbus.workspace = true
