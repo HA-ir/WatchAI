@@ -1,15 +1,25 @@
 use crate::discovery::ProcessScanner;
-use crate::traits::{DiscoveredSession, ProviderAdapter, ProviderCapabilities};
+use crate::traits::{DiscoveredSession, EventSink, ProviderAdapter, ProviderCapabilities};
 use async_trait::async_trait;
+use std::sync::RwLock;
 use tracing::debug;
 use watchai_core::session::AdapterStatus;
 
 /// Provider adapter for OpenAI Codex CLI agent.
-pub struct CodexCliAdapter;
+pub struct CodexCliAdapter {
+    event_sink: RwLock<Option<EventSink>>,
+}
 
 impl CodexCliAdapter {
     pub fn new() -> Self {
-        Self
+        Self {
+            event_sink: RwLock::new(None),
+        }
+    }
+
+    /// Retrieve the attached EventSink if present.
+    pub fn event_sink(&self) -> Option<EventSink> {
+        self.event_sink.read().ok().and_then(|g| g.clone())
     }
 }
 
@@ -31,6 +41,16 @@ impl ProviderAdapter for CodexCliAdapter {
 
     fn capabilities(&self) -> ProviderCapabilities {
         ProviderCapabilities::process_discovery_only()
+    }
+
+    fn attach_event_sink(&self, sink: EventSink) {
+        if let Ok(mut guard) = self.event_sink.write() {
+            *guard = Some(sink);
+        }
+    }
+
+    fn event_sink(&self) -> Option<EventSink> {
+        self.event_sink.read().ok().and_then(|g| g.clone())
     }
 
     async fn check_environment(&self) -> AdapterStatus {

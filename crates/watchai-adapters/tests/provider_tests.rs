@@ -1,11 +1,12 @@
 use std::fs;
+use std::sync::Arc;
 use std::time::Instant;
 use watchai_adapters::claude_code::ClaudeCodeAdapter;
 use watchai_adapters::codex_cli::CodexCliAdapter;
 use watchai_adapters::discovery::ProcessScanner;
 use watchai_adapters::opencode::OpenCodeAdapter;
 use watchai_adapters::registry::AdapterRegistry;
-use watchai_adapters::traits::{ProviderAdapter, TelemetryTier};
+use watchai_adapters::traits::{EventSink, ProviderAdapter, TelemetryTier};
 use watchai_core::session::AdapterStatus;
 
 #[test]
@@ -223,4 +224,55 @@ fn test_synthetic_scaling_benchmark_under_fifty_ms() {
         duration.as_millis() < 500, // Generous threshold to avoid CI flakiness while asserting fast execution
         "Discovery across 1000 processes must execute rapidly"
     );
+}
+
+#[test]
+fn test_concrete_adapters_receive_and_retain_event_sink() {
+    // Concrete Phase 8 adapters retain EventSink upon attachment
+    let claude = Arc::new(ClaudeCodeAdapter::new());
+    let codex = Arc::new(CodexCliAdapter::new());
+    let opencode = Arc::new(OpenCodeAdapter::new());
+
+    assert!(claude.event_sink().is_none());
+    assert!(codex.event_sink().is_none());
+    assert!(opencode.event_sink().is_none());
+
+    let (tx, _rx) = tokio::sync::mpsc::channel(16);
+    let sink = EventSink::new(tx, None);
+
+    claude.attach_event_sink(sink.clone());
+    codex.attach_event_sink(sink.clone());
+    opencode.attach_event_sink(sink.clone());
+
+    assert!(claude.event_sink().is_some());
+    assert!(codex.event_sink().is_some());
+    assert!(opencode.event_sink().is_some());
+}
+
+#[test]
+fn test_registry_distributes_sink_on_attach_and_subsequent_register() {
+    // AdapterRegistry broadcasts EventSink to existing adapters and on new registration
+    let mut registry = AdapterRegistry::new();
+    let claude = Arc::new(ClaudeCodeAdapter::new());
+    registry.register(claude.clone());
+
+    assert!(claude.event_sink().is_none());
+
+    let (tx, _rx) = tokio::sync::mpsc::channel(16);
+    let sink = EventSink::new(tx, None);
+    registry.attach_event_sink(sink.clone());
+
+    assert!(claude.event_sink().is_some());
+
+    // Register codex and opencode AFTER registry has received the sink
+    let codex = Arc::new(CodexCliAdapter::new());
+    let opencode = Arc::new(OpenCodeAdapter::new());
+    assert!(codex.event_sink().is_none());
+    assert!(opencode.event_sink().is_none());
+
+    registry.register(codex.clone());
+    registry.register(opencode.clone());
+
+    assert!(codex.event_sink().is_some());
+    assert!(opencode.event_sink().is_some());
 }

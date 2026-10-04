@@ -52,7 +52,7 @@ pub enum IngestionError {
 }
 
 /// An asynchronous event sink handle connecting adapters to the daemon ingestion engine.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct EventSink {
     tx: tokio::sync::mpsc::Sender<SessionLifecycleEvent>,
     shutdown_rx: Option<tokio::sync::watch::Receiver<bool>>,
@@ -156,6 +156,11 @@ pub trait ProviderAdapter: Send + Sync {
     /// Attach an EventSink handle to the adapter.
     /// Default no-op for ProcessDiscoveryOnly adapters.
     fn attach_event_sink(&self, _sink: EventSink) {}
+
+    /// Retrieve the attached EventSink if retained by this adapter.
+    fn event_sink(&self) -> Option<EventSink> {
+        None
+    }
 
     /// Probe the local environment for executable presence, config files, and hook readiness.
     async fn check_environment(&self) -> AdapterStatus;

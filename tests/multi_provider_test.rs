@@ -362,10 +362,28 @@ async fn test_adapter_registry_attaches_event_sink_and_shutdown_cancellation() {
     let (tx, mut rx) = tokio::sync::mpsc::channel::<SessionLifecycleEvent>(1);
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
+    // 1. Verify that before attach_event_sink, none of the adapters retain a sink
+    for adapter in registry.adapters() {
+        assert!(
+            adapter.event_sink().is_none(),
+            "Adapter [{}] must not retain EventSink before attach_event_sink",
+            adapter.provider_id()
+        );
+    }
+
     let sink = EventSink::new(tx, Some(shutdown_rx));
     registry.attach_event_sink(sink.clone());
 
     assert!(registry.event_sink().is_some());
+
+    // 2. Verify that all concrete registered adapters now actually retain the sink
+    for adapter in registry.adapters() {
+        assert!(
+            adapter.event_sink().is_some(),
+            "Adapter [{}] must retain EventSink after attach_event_sink",
+            adapter.provider_id()
+        );
+    }
 
     // Fill the 1-capacity buffer
     sink.ingest(SessionLifecycleEvent::StateTransition {
@@ -402,6 +420,120 @@ async fn test_adapter_registry_attaches_event_sink_and_shutdown_cancellation() {
 
     // Drain first event
     assert!(rx.recv().await.is_some());
+}
+
+#[tokio::test]
+async fn test_concrete_adapters_retain_event_sink_and_stream_events() {
+    // Explicit proof: daemon creates EventSink -> AdapterRegistry -> concrete adapters retain sink
+    let mut registry = AdapterRegistry::default_registry();
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<SessionLifecycleEvent>(10);
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+
+    // Pre-condition: All adapters have no sink
+    for adapter in registry.adapters() {
+        assert!(adapter.event_sink().is_none());
+    }
+
+    let sink = EventSink::new(tx, Some(shutdown_rx));
+    registry.attach_event_sink(sink);
+
+    // Find each concrete adapter and retrieve its retained sink
+    let claude = registry
+        .adapters()
+        .iter()
+        .find(|a| a.provider_id() == "claude-code")
+        .expect("ClaudeCodeAdapter must be present");
+    let codex = registry
+        .adapters()
+        .iter()
+        .find(|a| a.provider_id() == "codex-cli")
+        .expect("CodexCliAdapter must be present");
+    let opencode = registry
+        .adapters()
+        .iter()
+        .find(|a| a.provider_id() == "opencode")
+        .expect("OpenCodeAdapter must be present");
+
+    let claude_sink = claude
+        .event_sink()
+        .expect("ClaudeCodeAdapter must retain EventSink");
+    let codex_sink = codex
+        .event_sink()
+        .expect("CodexCliAdapter must retain EventSink");
+    let opencode_sink = opencode
+        .event_sink()
+        .expect("OpenCodeAdapter must retain EventSink");
+
+    // Ingest events through each retained adapter sink
+    claude_sink
+        .ingest(SessionLifecycleEvent::StateTransition {
+            session_id: "claude-sess-1".to_string(),
+            new_state: LifecycleState::Working,
+            tool_category: None,
+            timestamp: Utc::now(),
+        })
+        .await
+        .unwrap();
+
+    codex_sink
+        .ingest(SessionLifecycleEvent::StateTransition {
+            session_id: "codex-sess-1".to_string(),
+            new_state: LifecycleState::Working,
+            tool_category: None,
+            timestamp: Utc::now(),
+        })
+        .await
+        .unwrap();
+
+    opencode_sink
+        .ingest(SessionLifecycleEvent::StateTransition {
+            session_id: "opencode-sess-1".to_string(),
+            new_state: LifecycleState::Working,
+            tool_category: None,
+            timestamp: Utc::now(),
+        })
+        .await
+        .unwrap();
+
+    // Verify events arrived at the daemon receiver in exact order
+    let mut session_ids = Vec::new();
+    while let Ok(evt) = rx.try_recv() {
+        session_ids.push(evt.session_id().to_string());
+    }
+    assert_eq!(
+        session_ids,
+        vec!["claude-sess-1", "codex-sess-1", "opencode-sess-1"]
+    );
+
+    // Verify cooperative shutdown on an adapter's retained sink
+    // Fill remaining buffer (7 slots left)
+    for i in 0..7 {
+        claude_sink
+            .ingest(SessionLifecycleEvent::StateTransition {
+                session_id: format!("fill-{}", i),
+                new_state: LifecycleState::Working,
+                tool_category: None,
+                timestamp: Utc::now(),
+            })
+            .await
+            .unwrap();
+    }
+
+    let blocked_opencode = opencode_sink.clone();
+    let blocked_task = tokio::spawn(async move {
+        blocked_opencode
+            .ingest(SessionLifecycleEvent::StateTransition {
+                session_id: "blocked-send".to_string(),
+                new_state: LifecycleState::Working,
+                tool_category: None,
+                timestamp: Utc::now(),
+            })
+            .await
+    });
+
+    shutdown_tx.send(true).unwrap();
+    let blocked_outcome = blocked_task.await.unwrap();
+    assert_eq!(blocked_outcome, Err(IngestionError::Shutdown));
 }
 
 #[test]
