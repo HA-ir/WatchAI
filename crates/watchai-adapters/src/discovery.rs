@@ -10,27 +10,111 @@ use watchai_core::state::LifecycleState;
 pub struct ProcessScanner;
 
 impl ProcessScanner {
-    /// Scan `/proc` for processes whose cmdline contains `binary_name`.
+    /// Parse null-delimited `/proc/[pid]/cmdline` bytes into individual arguments.
+    pub fn parse_cmdline_args(cmdline_bytes: &[u8]) -> Vec<String> {
+        cmdline_bytes
+            .split(|&b| b == 0)
+            .filter(|slice| !slice.is_empty())
+            .map(|slice| String::from_utf8_lossy(slice).trim().to_string())
+            .collect()
+    }
+
+    /// Check if the parsed argument list matches `target_binaries` while rejecting false positives.
+    pub fn matches_cmdline_args(args: &[String], target_binaries: &[&str]) -> bool {
+        if args.is_empty() {
+            return false;
+        }
+
+        let argv0 = &args[0];
+        let exe_name = Path::new(argv0)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
+
+        // 1. Explicit Rejection List: utilities, shells, inspection tools, build systems
+        const REJECTED_EXECUTABLES: &[&str] = &[
+            "grep", "rg", "sh", "bash", "zsh", "git", "cargo", "ps", "which", "whereis", "find",
+            "sed", "awk", "xargs", "make", "ninja", "strace",
+        ];
+        if REJECTED_EXECUTABLES.contains(&exe_name) {
+            return false;
+        }
+
+        // 2. Direct Executable Matching
+        for &target in target_binaries {
+            if exe_name == target || exe_name == format!("{}-cli", target) {
+                return true;
+            }
+        }
+
+        // 3. Script Runner Matching: node, bun, python, python3, deno executing target script
+        const SCRIPT_RUNNERS: &[&str] = &["node", "bun", "python", "python3", "deno", "ts-node"];
+        if SCRIPT_RUNNERS.contains(&exe_name) && args.len() > 1 {
+            let script_arg = &args[1];
+            let script_name = Path::new(script_arg)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+
+            for &target in target_binaries {
+                if script_name == target
+                    || script_name == format!("{}-cli", target)
+                    || script_name.starts_with(&format!("{}.", target))
+                    || script_name.starts_with(&format!("{}-cli.", target))
+                {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Scan `/proc` for processes matching `binary_name`.
     pub fn scan_processes(
         binary_name: &str,
         provider_id: &'static str,
         provider_display_name: &'static str,
     ) -> Vec<DiscoveredSession> {
-        Self::scan_proc_dir(
+        Self::scan_processes_multi(&[binary_name], provider_id, provider_display_name)
+    }
+
+    /// Scan `/proc` for processes matching any of `target_binaries`.
+    pub fn scan_processes_multi(
+        target_binaries: &[&str],
+        provider_id: &'static str,
+        provider_display_name: &'static str,
+    ) -> Vec<DiscoveredSession> {
+        Self::scan_proc_dir_multi(
             Path::new("/proc"),
-            binary_name,
+            target_binaries,
             provider_id,
             provider_display_name,
         )
     }
 
     /// Scan a specified proc root directory for matching agent processes.
-    ///
-    /// Isolates per-process I/O errors so that unreadable, locked, or rapidly
-    /// disappearing processes do not abort discovery for sibling processes.
     pub fn scan_proc_dir(
         proc_root: &Path,
         binary_name: &str,
+        provider_id: &'static str,
+        provider_display_name: &'static str,
+    ) -> Vec<DiscoveredSession> {
+        Self::scan_proc_dir_multi(
+            proc_root,
+            &[binary_name],
+            provider_id,
+            provider_display_name,
+        )
+    }
+
+    /// Scan a specified proc root directory for processes matching any of `target_binaries`.
+    ///
+    /// Isolates per-process I/O errors so that unreadable, locked, or rapidly
+    /// disappearing processes do not abort discovery for sibling processes.
+    pub fn scan_proc_dir_multi(
+        proc_root: &Path,
+        target_binaries: &[&str],
         provider_id: &'static str,
         provider_display_name: &'static str,
     ) -> Vec<DiscoveredSession> {
@@ -68,8 +152,8 @@ impl ProcessScanner {
                 }
             };
 
-            let cmdline = String::from_utf8_lossy(&cmdline_bytes);
-            if !cmdline.contains(binary_name) {
+            let args = Self::parse_cmdline_args(&cmdline_bytes);
+            if !Self::matches_cmdline_args(&args, target_binaries) {
                 continue;
             }
 

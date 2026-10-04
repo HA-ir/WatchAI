@@ -101,3 +101,23 @@ To prevent D-Bus message storms and CPU thrashing during daemon crash loops:
 - **Randomized Jitter**: $\pm 20\%$ offset applied to each interval (effective delay strictly bounded between 800ms and 30,000ms).
 - **Success Reset**: A complete, successful handshake resets consecutive failures to 0.
 - **Silent Recovery**: The client suppresses desktop notification alerts during crash loops and never executes external process managers.
+
+## Multi-Provider Discovery & Capability Modeling (Phase 8)
+
+### 1. Supported Built-In Providers
+WatchAI registers three default provider adapters in `AdapterRegistry::default_registry()`:
+1. **Claude Code (`claude-code`)**: Scans `/proc` for `claude` CLI processes.
+2. **OpenAI Codex CLI (`codex-cli`)**: Scans `/proc` for `codex` / `codex-cli` binaries and runtime runners (`node .../codex`).
+3. **OpenCode (`opencode`)**: Scans `/proc` for `opencode` binaries and runtime runners (`python .../opencode`).
+
+### 2. Provider Observational Capabilities
+Each adapter declares its capabilities via `ProviderCapabilities`:
+- `telemetry_tier`: Set to `TelemetryTier::ProcessDiscoveryOnly` for Phase 8.
+- `supports_tool_categories`: `false`.
+- `supports_activity_events`: `false`.
+
+### 3. Decoupled Prioritized Event Ingestion Channel
+Adapters communicate with the daemon engine through a bounded `tokio::sync::mpsc::channel(256)`:
+- **Critical Transitions (`StateTransition`, `SessionTerminated`)**: Use `.send().await` under cooperative cancellation, ensuring guaranteed delivery without silent drops.
+- **Telemetry Heartbeats (`Heartbeat`)**: Use non-blocking `try_send()`. Coalesced or dropped when channel capacity exceeds 80% utilization to guarantee buffer headroom for critical state transitions.
+- **Event Ordering**: State transitions validate timestamp monotonicity against `session.state_entered_at` and increment the daemon's internal `sequence_number`.

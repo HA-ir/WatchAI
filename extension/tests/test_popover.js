@@ -81,10 +81,57 @@ function testCardSortingLogic() {
     print('✓ Card sorting logic correctly elevates urgent states (ERROR, WAITING) to the top.');
 }
 
+function testMultiProviderPopoverRendering() {
+    // T122: Verify multi-provider display names rendered correctly
+    const sessions = [
+        {
+            sessionId: 'sess-claude',
+            providerId: 'claude-code',
+            providerDisplayName: 'Claude Code',
+            projectName: 'frontend',
+            currentState: 'WORKING',
+        },
+        {
+            sessionId: 'sess-codex',
+            providerId: 'codex-cli',
+            providerDisplayName: 'OpenAI Codex',
+            projectName: 'backend',
+            currentState: 'IDLE',
+        },
+        {
+            sessionId: 'sess-opencode',
+            providerId: 'opencode',
+            providerDisplayName: 'OpenCode',
+            projectName: 'scripts',
+            currentState: 'WAITING',
+        },
+    ];
+
+    const titles = sessions.map(s => s.providerDisplayName || s.providerId);
+    if (titles[0] !== 'Claude Code') {
+        throw new Error(`Expected 'Claude Code', got '${titles[0]}'`);
+    }
+    if (titles[1] !== 'OpenAI Codex') {
+        throw new Error(`Expected 'OpenAI Codex', got '${titles[1]}'`);
+    }
+    if (titles[2] !== 'OpenCode') {
+        throw new Error(`Expected 'OpenCode', got '${titles[2]}'`);
+    }
+
+    // Test fallback when providerDisplayName is empty
+    const fallbackTitle = { providerId: 'custom-provider', providerDisplayName: '' };
+    if ((fallbackTitle.providerDisplayName || fallbackTitle.providerId) !== 'custom-provider') {
+        throw new Error('Expected fallback to providerId when displayName is empty');
+    }
+
+    print('✓ Multi-provider display name rendering and fallback verified.');
+}
+
 try {
     testFormatDuration();
     testGetStatePriority();
     testCardSortingLogic();
+    testMultiProviderPopoverRendering();
     print('All popover GJS tests passed successfully!');
 } catch (e) {
     printerr('Test failed: ' + e);

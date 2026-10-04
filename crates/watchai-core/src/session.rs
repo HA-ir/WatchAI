@@ -8,9 +8,9 @@ use tokio::sync::RwLock;
 
 use crate::state::LifecycleState;
 
-/// High-level, sanitized category of tool activity.
-/// Strictly excludes arguments, filenames, prompt queries, and outputs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// High-level, sanitized activity category representing what an agent is currently doing.
+/// Strictly non-invasive: never includes file paths, command names, or prompt data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ToolCategory {
     FileRead,
@@ -78,11 +78,11 @@ pub struct AgentSession {
     /// Adapter discovery status.
     pub adapter_status: AdapterStatus,
     /// Process start time in clock ticks since boot (/proc/[pid]/stat field 22).
-    /// Used internally to detect PID reuse; strictly private and excluded from serialization/IPC.
+    /// Used to distinguish PID reuse from legitimate session survival across restarts.
     #[serde(skip)]
     pub process_start_time: Option<u64>,
-    /// Number of consecutive failed /proc checks.
-    /// Reaching 2 triggers ungraceful termination; strictly private and excluded from serialization/IPC.
+    /// Count of consecutive failed /proc checks.
+    /// Used to implement hysteresis before declaring an ungraceful crash (Phase 6).
     #[serde(skip)]
     pub consecutive_proc_failures: u32,
 }
@@ -99,8 +99,8 @@ impl AgentSession {
         adapter_status: AdapterStatus,
     ) -> Self {
         let now = Utc::now();
-        let path = project_path.as_ref().to_path_buf();
-        let project_name = path
+        let path_buf = project_path.as_ref().to_path_buf();
+        let project_name = path_buf
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("workspace")
@@ -111,9 +111,9 @@ impl AgentSession {
             provider_id: provider_id.into(),
             provider_display_name: provider_display_name.into(),
             project_name,
-            project_path: path,
+            project_path: path_buf,
             current_state: initial_state,
-            sequence_number: 1,
+            sequence_number: 0,
             started_at: now,
             state_entered_at: now,
             last_seen_at: now,
@@ -126,19 +126,30 @@ impl AgentSession {
         }
     }
 
-    /// Attach process start time for PID reuse verification.
+    /// Builder method to attach process start time ticks.
     pub fn with_process_start_time(mut self, start_time: Option<u64>) -> Self {
         self.process_start_time = start_time;
         self
     }
 
-    /// Attempt to transition to a new lifecycle state.
-    /// Returns Ok(()) if the transition was valid and applied, or Err with description if rejected.
+    /// Attempt to transition to a new lifecycle state at current UTC time.
     pub fn transition_to(
         &mut self,
         target_state: LifecycleState,
         sequence_number: u64,
         tool_category: Option<ToolCategory>,
+    ) -> Result<(), String> {
+        self.transition_to_at(target_state, sequence_number, tool_category, Utc::now())
+    }
+
+    /// Attempt to transition to a new lifecycle state at a specified timestamp.
+    /// Returns Ok(()) if the transition was valid and applied, or Err with description if rejected.
+    pub fn transition_to_at(
+        &mut self,
+        target_state: LifecycleState,
+        sequence_number: u64,
+        tool_category: Option<ToolCategory>,
+        at: DateTime<Utc>,
     ) -> Result<(), String> {
         // Discard out-of-order or duplicate events based on sequence number
         if sequence_number <= self.sequence_number {
@@ -155,14 +166,13 @@ impl AgentSession {
             ));
         }
 
-        let now = Utc::now();
         if self.current_state != target_state {
             self.current_state = target_state;
-            self.state_entered_at = now;
+            self.state_entered_at = at;
         }
 
         self.sequence_number = sequence_number;
-        self.last_seen_at = now;
+        self.last_seen_at = at;
         self.active_tool_category = tool_category;
         Ok(())
     }
@@ -187,6 +197,116 @@ impl AgentSession {
         tool_category: Option<ToolCategory>,
     ) -> Result<(), String> {
         self.transition_to(target_state, sequence_number, tool_category)
+    }
+
+    /// Apply an incoming SessionLifecycleEvent to the session.
+    /// Validates FSM transition legality, verifies timestamp monotonicity against `last_seen_at`,
+    /// preserves terminal state immunity, increments the internal monotonic sequence number, and updates activity timestamps.
+    pub fn apply_lifecycle_event(&mut self, event: &SessionLifecycleEvent) -> Result<(), String> {
+        if self.current_state.is_terminal() {
+            return Err(format!(
+                "Rejected event: session is already in terminal state {}",
+                self.current_state
+            ));
+        }
+
+        match event {
+            SessionLifecycleEvent::StateTransition {
+                new_state,
+                tool_category,
+                timestamp,
+                ..
+            } => {
+                if *timestamp < self.last_seen_at {
+                    return Err(format!(
+                        "Dropped stale event: event timestamp {} is before session last_seen_at {}",
+                        timestamp, self.last_seen_at
+                    ));
+                }
+                let next_seq = self.sequence_number + 1;
+                self.transition_to_at(*new_state, next_seq, *tool_category, *timestamp)
+            }
+            SessionLifecycleEvent::Heartbeat { timestamp, .. } => {
+                if *timestamp < self.last_seen_at {
+                    return Err(format!(
+                        "Dropped stale heartbeat: timestamp {} is before session last_seen_at {}",
+                        timestamp, self.last_seen_at
+                    ));
+                }
+                self.last_seen_at = *timestamp;
+                Ok(())
+            }
+            SessionLifecycleEvent::SessionTerminated {
+                exit_code,
+                timestamp,
+                ..
+            } => {
+                if *timestamp < self.last_seen_at {
+                    return Err(format!(
+                        "Dropped stale termination: timestamp {} is before session last_seen_at {}",
+                        timestamp, self.last_seen_at
+                    ));
+                }
+                let target = match exit_code {
+                    Some(0) => LifecycleState::Success,
+                    Some(_) => LifecycleState::Error,
+                    None => LifecycleState::Cancelled,
+                };
+                let next_seq = self.sequence_number + 1;
+                self.transition_to_at(target, next_seq, None, *timestamp)
+            }
+        }
+    }
+}
+
+/// Standardized, provider-agnostic domain event streamed from adapters to the daemon ingestion engine.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SessionLifecycleEvent {
+    /// Explicit request to transition session lifecycle state.
+    StateTransition {
+        session_id: String,
+        new_state: LifecycleState,
+        tool_category: Option<ToolCategory>,
+        timestamp: DateTime<Utc>,
+    },
+    /// Periodic heartbeat confirming agent process activity.
+    Heartbeat {
+        session_id: String,
+        timestamp: DateTime<Utc>,
+    },
+    /// Notification that the agent session has terminated.
+    SessionTerminated {
+        session_id: String,
+        exit_code: Option<i32>,
+        timestamp: DateTime<Utc>,
+    },
+}
+
+impl SessionLifecycleEvent {
+    /// Whether this event is a critical state transition that MUST NOT be dropped.
+    pub fn is_critical(&self) -> bool {
+        matches!(
+            self,
+            Self::StateTransition { .. } | Self::SessionTerminated { .. }
+        )
+    }
+
+    /// Associated session identifier.
+    pub fn session_id(&self) -> &str {
+        match self {
+            Self::StateTransition { session_id, .. } => session_id,
+            Self::Heartbeat { session_id, .. } => session_id,
+            Self::SessionTerminated { session_id, .. } => session_id,
+        }
+    }
+
+    /// Event creation timestamp.
+    pub fn timestamp(&self) -> DateTime<Utc> {
+        match self {
+            Self::StateTransition { timestamp, .. } => *timestamp,
+            Self::Heartbeat { timestamp, .. } => *timestamp,
+            Self::SessionTerminated { timestamp, .. } => *timestamp,
+        }
     }
 }
 
@@ -241,9 +361,65 @@ impl SessionRegistry {
         map.remove(session_id)
     }
 
-    /// Count total registered sessions.
+    /// Return count of sessions in registry.
     pub async fn count(&self) -> usize {
         let map = self.sessions.read().await;
         map.len()
+    }
+}
+
+/// Result of processing a SessionLifecycleEvent against the session registry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EventProcessingOutcome {
+    /// Valid state transition was accepted and applied to the session.
+    Applied {
+        session_id: String,
+        new_state: LifecycleState,
+    },
+    /// Heartbeat was accepted and updated session activity timestamp.
+    HeartbeatApplied { session_id: String },
+    /// Explicitly dropped: event referenced an unknown session.
+    DroppedUnknownSession { session_id: String },
+    /// Explicitly dropped: event violated FSM transition legality or was temporally stale.
+    DroppedInvalidTransition { session_id: String, error: String },
+}
+
+/// Process a SessionLifecycleEvent against the SessionRegistry with explicit rejection semantics.
+/// - Valid events update the session in the registry and return `Applied` or `HeartbeatApplied`.
+/// - Unknown-session events return `DroppedUnknownSession` without mutating registry or aggregate state.
+/// - Illegal transitions or stale timestamps return `DroppedInvalidTransition`.
+pub async fn process_lifecycle_event(
+    registry: &SessionRegistry,
+    event: &SessionLifecycleEvent,
+) -> EventProcessingOutcome {
+    let session_id = event.session_id();
+    let mut session = match registry.get(session_id).await {
+        Some(s) => s,
+        None => {
+            return EventProcessingOutcome::DroppedUnknownSession {
+                session_id: session_id.to_string(),
+            };
+        }
+    };
+
+    match session.apply_lifecycle_event(event) {
+        Ok(()) => {
+            let new_state = session.current_state;
+            registry.upsert(session).await;
+            if matches!(event, SessionLifecycleEvent::Heartbeat { .. }) {
+                EventProcessingOutcome::HeartbeatApplied {
+                    session_id: session_id.to_string(),
+                }
+            } else {
+                EventProcessingOutcome::Applied {
+                    session_id: session_id.to_string(),
+                    new_state,
+                }
+            }
+        }
+        Err(e) => EventProcessingOutcome::DroppedInvalidTransition {
+            session_id: session_id.to_string(),
+            error: e,
+        },
     }
 }

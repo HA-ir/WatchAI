@@ -1,15 +1,20 @@
 use crate::discovery::ProcessScanner;
-use crate::traits::{DiscoveredSession, ProviderAdapter};
+use crate::traits::{DiscoveredSession, EventSink, ProviderAdapter, ProviderCapabilities};
 use async_trait::async_trait;
+use std::sync::RwLock;
 use tracing::debug;
 use watchai_core::session::AdapterStatus;
 
 /// Provider adapter for Anthropic's Claude Code CLI agent.
-pub struct ClaudeCodeAdapter;
+pub struct ClaudeCodeAdapter {
+    event_sink: RwLock<Option<EventSink>>,
+}
 
 impl ClaudeCodeAdapter {
     pub fn new() -> Self {
-        Self
+        Self {
+            event_sink: RwLock::new(None),
+        }
     }
 }
 
@@ -27,6 +32,16 @@ impl ProviderAdapter for ClaudeCodeAdapter {
 
     fn display_name(&self) -> &'static str {
         "Claude Code"
+    }
+
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities::process_discovery_only()
+    }
+
+    fn attach_event_sink(&self, sink: EventSink) {
+        if let Ok(mut guard) = self.event_sink.write() {
+            *guard = Some(sink);
+        }
     }
 
     async fn check_environment(&self) -> AdapterStatus {
@@ -54,5 +69,22 @@ impl ProviderAdapter for ClaudeCodeAdapter {
     async fn discover_sessions(&self) -> Vec<DiscoveredSession> {
         // Use non-invasive /proc scanner targeting "claude"
         ProcessScanner::scan_processes("claude", self.provider_id(), self.display_name())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_claude_adapter_retains_attached_event_sink() {
+        let adapter = ClaudeCodeAdapter::new();
+        assert!(adapter.event_sink.read().unwrap().is_none());
+
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let sink = EventSink::new(tx, None);
+
+        adapter.attach_event_sink(sink);
+        assert!(adapter.event_sink.read().unwrap().is_some());
     }
 }
