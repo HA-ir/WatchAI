@@ -3,13 +3,17 @@ mod sync;
 use chrono::Utc;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, warn};
 use watchai_adapters::registry::AdapterRegistry;
+use watchai_adapters::traits::EventSink;
 use watchai_core::liveness::{
     prune_retained_sessions, run_liveness_cycle, RealProcStatReader,
     LIVENESS_CHECK_INTERVAL_SECONDS,
 };
-use watchai_core::session::{AgentSession, SessionLifecycleEvent, SessionRegistry};
+use watchai_core::session::{
+    process_lifecycle_event, AgentSession, EventProcessingOutcome, SessionLifecycleEvent,
+    SessionRegistry,
+};
 use watchai_ipc::dbus_service::{WatchAiDbusService, BUS_NAME, OBJECT_PATH};
 use watchai_ipc::protocol::SessionDto;
 
@@ -40,31 +44,6 @@ impl RateLimiter {
         }
         self.last_emitted.insert(key.to_string(), now);
         true
-    }
-}
-
-/// Ingest a SessionLifecycleEvent into the bounded channel with prioritized backpressure.
-/// Critical events (StateTransition, SessionTerminated) await channel reservation;
-/// Heartbeats drop/coalesce when channel utilization exceeds 80% capacity to preserve buffer headroom.
-pub async fn ingest_event(
-    tx: &tokio::sync::mpsc::Sender<SessionLifecycleEvent>,
-    event: SessionLifecycleEvent,
-) -> Result<(), String> {
-    if event.is_critical() {
-        tx.send(event)
-            .await
-            .map_err(|e| format!("Failed to deliver critical lifecycle event: {}", e))
-    } else {
-        let cap = tx.capacity();
-        if cap < 50 {
-            trace!(
-                "Dropping heartbeat under event channel pressure (capacity: {})",
-                cap
-            );
-            return Ok(());
-        }
-        let _ = tx.try_send(event);
-        Ok(())
     }
 }
 
@@ -115,7 +94,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Starting WatchAI Daemon v0.1.0...");
 
     let registry = SessionRegistry::new();
-    let adapter_registry = AdapterRegistry::default_registry();
+    let mut adapter_registry = AdapterRegistry::default_registry();
     let dbus_service = WatchAiDbusService::new(registry.clone());
     let aggregate_lock = dbus_service.aggregate();
 
@@ -194,6 +173,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (event_tx, mut event_rx) =
         tokio::sync::mpsc::channel::<SessionLifecycleEvent>(EVENT_CHANNEL_CAPACITY);
 
+    // Connect event ingestion sink to adapter registry architecture (Audit Finding 1)
+    let event_sink = EventSink::new(event_tx.clone(), Some(shutdown_tx.subscribe()));
+    adapter_registry.attach_event_sink(event_sink);
+
     let ingest_registry = registry.clone();
     let ingest_agg = aggregate_lock.clone();
     let ingest_iface = iface_ref.clone();
@@ -206,37 +189,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 maybe_event = event_rx.recv() => {
                     match maybe_event {
                         Some(event) => {
-                            let now = Utc::now();
-                            let session_id = event.session_id().to_string();
-                            if let Some(mut session) = ingest_registry.get(&session_id).await {
-                                if let Err(e) = session.apply_lifecycle_event(&event) {
-                                    debug!("Rejected lifecycle event for {}: {}", session_id, e);
-                                    continue;
-                                }
-                                ingest_registry.upsert(session.clone()).await;
+                            let outcome = process_lifecycle_event(&ingest_registry, &event).await;
+                            match outcome {
+                                EventProcessingOutcome::Applied { session_id, .. } => {
+                                    if let Some(session) = ingest_registry.get(&session_id).await {
+                                        let dto = SessionDto::from(&session);
+                                        if let Err(e) = WatchAiDbusService::emit_session_updated(
+                                            ingest_iface.signal_context(),
+                                            &dto,
+                                        ).await {
+                                            warn!("Failed to emit SessionUpdated signal: {}", e);
+                                        }
 
-                                let dto = SessionDto::from(&session);
-                                if let Err(e) = WatchAiDbusService::emit_session_updated(
-                                    ingest_iface.signal_context(),
-                                    &dto,
-                                ).await {
-                                    warn!("Failed to emit SessionUpdated signal: {}", e);
-                                }
-
-                                if let Some(agg_dto) = sync_aggregate_state(&ingest_registry, &ingest_agg, now).await {
-                                    if let Err(e) = WatchAiDbusService::emit_aggregate_state_changed(
-                                        ingest_iface.signal_context(),
-                                        &agg_dto.state,
-                                        agg_dto.active_session_count,
-                                        agg_dto.waiting_session_count,
-                                        agg_dto.error_session_count,
-                                        &agg_dto.updated_at,
-                                    ).await {
-                                        warn!("Failed to emit AggregateStateChanged signal: {}", e);
+                                        let now = Utc::now();
+                                        if let Some(agg_dto) = sync_aggregate_state(&ingest_registry, &ingest_agg, now).await {
+                                            if let Err(e) = WatchAiDbusService::emit_aggregate_state_changed(
+                                                ingest_iface.signal_context(),
+                                                &agg_dto.state,
+                                                agg_dto.active_session_count,
+                                                agg_dto.waiting_session_count,
+                                                agg_dto.error_session_count,
+                                                &agg_dto.updated_at,
+                                            ).await {
+                                                warn!("Failed to emit AggregateStateChanged signal: {}", e);
+                                            }
+                                        }
                                     }
                                 }
-                            } else {
-                                debug!("Received lifecycle event for unknown session: {}", session_id);
+                                EventProcessingOutcome::HeartbeatApplied { .. } => {
+                                    // Heartbeat updated last_seen_at; no state change signal needed
+                                }
+                                EventProcessingOutcome::DroppedUnknownSession { session_id } => {
+                                    debug!("Ingestion consumer dropped event for unknown session: {}", session_id);
+                                }
+                                EventProcessingOutcome::DroppedInvalidTransition { session_id, error } => {
+                                    debug!("Ingestion consumer dropped invalid transition for {}: {}", session_id, error);
+                                }
                             }
                         }
                         None => break, // All event senders dropped
@@ -246,11 +234,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     // Drain remaining critical events on shutdown (T119)
                     while let Ok(event) = event_rx.try_recv() {
                         if event.is_critical() {
-                            let session_id = event.session_id().to_string();
-                            if let Some(mut session) = ingest_registry.get(&session_id).await {
-                                let _ = session.apply_lifecycle_event(&event);
-                                ingest_registry.upsert(session).await;
-                            }
+                            let _ = process_lifecycle_event(&ingest_registry, &event).await;
                         }
                     }
                     break;

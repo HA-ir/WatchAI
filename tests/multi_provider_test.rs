@@ -2,10 +2,12 @@ use chrono::Utc;
 use std::fs;
 use std::path::PathBuf;
 use watchai_adapters::discovery::ProcessScanner;
-use watchai_adapters::traits::DiscoveredSession;
+use watchai_adapters::registry::AdapterRegistry;
+use watchai_adapters::traits::{DiscoveredSession, EventSink, IngestionError};
+use watchai_core::aggregate::compute_aggregate_state;
 use watchai_core::session::{
-    derive_process_session_id, AdapterStatus, AgentSession, SessionLifecycleEvent, SessionRegistry,
-    ToolCategory,
+    derive_process_session_id, process_lifecycle_event, AdapterStatus, AgentSession,
+    EventProcessingOutcome, SessionLifecycleEvent, SessionRegistry, ToolCategory,
 };
 use watchai_core::state::LifecycleState;
 use watchai_ipc::protocol::SessionDto;
@@ -141,61 +143,189 @@ async fn test_activity_knowledge_boundary_across_all_providers() {
 
 #[tokio::test]
 async fn test_prioritized_event_ingestion_and_heartbeat_saturation() {
-    // T118: Critical events delivered even under heartbeat saturation
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<SessionLifecycleEvent>(10);
-    let session_id = "test-session-prioritized".to_string();
+    // T118: Prove 256-capacity channel saturation semantics with 300 heartbeats (Audit Finding 2)
+    // Invariants:
+    // 1. Channel is bounded at 256.
+    // 2. Heartbeats are shed when capacity < 50.
+    // 3. Critical StateTransition and SessionTerminated survive flood.
+    // 4. Zero deadlock, zero sleeps, deterministic.
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<SessionLifecycleEvent>(256);
+    let sink = EventSink::new(tx, None);
+    let session_id = "test-session-256-saturation".to_string();
 
-    // Spawn producer that floods with heartbeats using try_send when capacity permits
-    let p_sid = session_id.clone();
-    let tx_clone = tx.clone();
-    let producer = tokio::spawn(async move {
-        // Send 15 heartbeats (exceeds channel capacity of 10)
-        let mut heartbeats_dropped = 0;
-        for _ in 0..15 {
-            let hb = SessionLifecycleEvent::Heartbeat {
-                session_id: p_sid.clone(),
-                timestamp: Utc::now(),
-            };
-            if tx_clone.capacity() < 3 {
-                // Drop low-priority heartbeat when headroom is low
-                heartbeats_dropped += 1;
-            } else {
-                let _ = tx_clone.try_send(hb);
-            }
-        }
-
-        // Send 1 critical state transition event: must succeed!
-        let crit = SessionLifecycleEvent::StateTransition {
-            session_id: p_sid.clone(),
-            new_state: LifecycleState::Working,
-            tool_category: Some(ToolCategory::ModelThinking),
+    // 1. Flood with 300 heartbeats
+    let mut heartbeats_accepted = 0;
+    let mut heartbeats_shed = 0;
+    for _ in 0..300 {
+        let hb = SessionLifecycleEvent::Heartbeat {
+            session_id: session_id.clone(),
             timestamp: Utc::now(),
         };
-        tx_clone
-            .send(crit)
-            .await
-            .expect("Critical event must be sent");
-        heartbeats_dropped
-    });
-
-    let dropped = producer.await.unwrap();
-    assert!(
-        dropped > 0,
-        "Excess heartbeats must be dropped under pressure"
-    );
-
-    // Consume all events and verify critical state transition is present
-    let mut critical_found = false;
-    while let Ok(event) = rx.try_recv() {
-        if let SessionLifecycleEvent::StateTransition { new_state, .. } = event {
-            assert_eq!(new_state, LifecycleState::Working);
-            critical_found = true;
+        match sink.ingest(hb).await {
+            Ok(()) => heartbeats_accepted += 1,
+            Err(IngestionError::HeartbeatShed) => heartbeats_shed += 1,
+            Err(e) => panic!("Unexpected error: {:?}", e),
         }
     }
-    assert!(
-        critical_found,
-        "Critical StateTransition event must be delivered"
+
+    // Capacity is 256; heartbeats shed when remaining capacity < 50 (i.e. at 207 queued)
+    assert_eq!(
+        heartbeats_accepted, 207,
+        "Exactly 207 heartbeats must be accepted before shedding threshold"
     );
+    assert_eq!(
+        heartbeats_shed, 93,
+        "Remaining 93 heartbeats must be shed to preserve headroom"
+    );
+    assert_eq!(
+        sink.capacity(),
+        49,
+        "Channel must retain 49 reserved slots for critical events"
+    );
+
+    // 2. Send critical StateTransition: MUST succeed immediately!
+    let crit_trans = SessionLifecycleEvent::StateTransition {
+        session_id: session_id.clone(),
+        new_state: LifecycleState::Working,
+        tool_category: Some(ToolCategory::ModelThinking),
+        timestamp: Utc::now(),
+    };
+    sink.ingest(crit_trans)
+        .await
+        .expect("Critical StateTransition must not be dropped");
+
+    // 3. Send critical SessionTerminated: MUST succeed immediately!
+    let crit_term = SessionLifecycleEvent::SessionTerminated {
+        session_id: session_id.clone(),
+        exit_code: Some(0),
+        timestamp: Utc::now(),
+    };
+    sink.ingest(crit_term)
+        .await
+        .expect("Critical SessionTerminated must not be dropped");
+
+    // 4. Drain channel and verify critical events are present in correct order
+    let mut received_heartbeats = 0;
+    let mut transition_found = false;
+    let mut termination_found = false;
+
+    while let Ok(evt) = rx.try_recv() {
+        match evt {
+            SessionLifecycleEvent::Heartbeat { .. } => received_heartbeats += 1,
+            SessionLifecycleEvent::StateTransition { new_state, .. } => {
+                assert_eq!(new_state, LifecycleState::Working);
+                transition_found = true;
+            }
+            SessionLifecycleEvent::SessionTerminated { exit_code, .. } => {
+                assert_eq!(exit_code, Some(0));
+                termination_found = true;
+            }
+        }
+    }
+
+    assert_eq!(received_heartbeats, 207);
+    assert!(
+        transition_found,
+        "Critical StateTransition must be delivered"
+    );
+    assert!(
+        termination_found,
+        "Critical SessionTerminated must be delivered"
+    );
+}
+
+#[tokio::test]
+async fn test_unknown_session_event_explicitly_rejected() {
+    // Audit Finding 4: Unknown session events have explicit rejection semantics
+    let registry = SessionRegistry::new();
+
+    // 1. Create and upsert known session in IDLE
+    let known_id = "session-known-1".to_string();
+    let session = AgentSession::new(
+        known_id.clone(),
+        "claude-code",
+        "Claude Code",
+        "/workspace/known",
+        Some(9001),
+        LifecycleState::Idle,
+        AdapterStatus::DiscoveryRequired,
+    );
+    registry.upsert(session).await;
+
+    // 2. Known session transition -> Accepted
+    let known_event = SessionLifecycleEvent::StateTransition {
+        session_id: known_id.clone(),
+        new_state: LifecycleState::Working,
+        tool_category: Some(ToolCategory::ModelThinking),
+        timestamp: Utc::now(),
+    };
+    let outcome1 = process_lifecycle_event(&registry, &known_event).await;
+    assert_eq!(
+        outcome1,
+        EventProcessingOutcome::Applied {
+            session_id: known_id.clone(),
+            new_state: LifecycleState::Working
+        }
+    );
+    assert_eq!(
+        registry.get(&known_id).await.unwrap().current_state,
+        LifecycleState::Working
+    );
+
+    // 3. Unknown session transition -> DroppedUnknownSession
+    let ghost_id = "session-ghost-unknown".to_string();
+    let ghost_event = SessionLifecycleEvent::StateTransition {
+        session_id: ghost_id.clone(),
+        new_state: LifecycleState::Working,
+        tool_category: None,
+        timestamp: Utc::now(),
+    };
+    let outcome2 = process_lifecycle_event(&registry, &ghost_event).await;
+    assert_eq!(
+        outcome2,
+        EventProcessingOutcome::DroppedUnknownSession {
+            session_id: ghost_id.clone()
+        }
+    );
+
+    // 4. Verify unknown session was NOT created in registry
+    assert!(registry.get(&ghost_id).await.is_none());
+    assert_eq!(
+        registry.count().await,
+        1,
+        "Unknown event must never create a phantom session"
+    );
+
+    // 5. Verify aggregate state is unmutated by ghost event
+    let agg = compute_aggregate_state(&registry.list().await, Utc::now());
+    assert_eq!(agg.active_session_count, 1);
+    assert_eq!(agg.aggregate_state, LifecycleState::Working);
+
+    // 6. Unknown heartbeat -> DroppedUnknownSession
+    let ghost_hb = SessionLifecycleEvent::Heartbeat {
+        session_id: ghost_id.clone(),
+        timestamp: Utc::now(),
+    };
+    let outcome3 = process_lifecycle_event(&registry, &ghost_hb).await;
+    assert_eq!(
+        outcome3,
+        EventProcessingOutcome::DroppedUnknownSession {
+            session_id: ghost_id.clone()
+        }
+    );
+
+    // 7. Invalid transition on known session -> DroppedInvalidTransition
+    let invalid_event = SessionLifecycleEvent::StateTransition {
+        session_id: known_id.clone(),
+        new_state: LifecycleState::Starting, // Working -> Starting is invalid
+        tool_category: None,
+        timestamp: Utc::now(),
+    };
+    let outcome4 = process_lifecycle_event(&registry, &invalid_event).await;
+    assert!(matches!(
+        outcome4,
+        EventProcessingOutcome::DroppedInvalidTransition { .. }
+    ));
 }
 
 #[tokio::test]
@@ -223,6 +353,55 @@ async fn test_cooperative_shutdown_drains_critical_events() {
 
     assert_eq!(received.len(), 1);
     assert!(received[0].is_critical());
+}
+
+#[tokio::test]
+async fn test_adapter_registry_attaches_event_sink_and_shutdown_cancellation() {
+    // Audit Finding 1 & Shutdown Safety: EventSink connected to AdapterRegistry and cancellation on shutdown
+    let mut registry = AdapterRegistry::default_registry();
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<SessionLifecycleEvent>(1);
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+
+    let sink = EventSink::new(tx, Some(shutdown_rx));
+    registry.attach_event_sink(sink.clone());
+
+    assert!(registry.event_sink().is_some());
+
+    // Fill the 1-capacity buffer
+    sink.ingest(SessionLifecycleEvent::StateTransition {
+        session_id: "s1".to_string(),
+        new_state: LifecycleState::Working,
+        tool_category: None,
+        timestamp: Utc::now(),
+    })
+    .await
+    .unwrap();
+
+    // Now buffer is full (capacity = 0). Next critical send would block unless cancelled by shutdown!
+    let sink_clone = sink.clone();
+    let blocked_send = tokio::spawn(async move {
+        sink_clone
+            .ingest(SessionLifecycleEvent::StateTransition {
+                session_id: "s2".to_string(),
+                new_state: LifecycleState::Working,
+                tool_category: None,
+                timestamp: Utc::now(),
+            })
+            .await
+    });
+
+    // Trigger shutdown signal: MUST unblock blocked_send with IngestionError::Shutdown!
+    shutdown_tx.send(true).unwrap();
+
+    let send_result = blocked_send.await.unwrap();
+    assert_eq!(
+        send_result,
+        Err(IngestionError::Shutdown),
+        "Shutdown signal must cooperatively unblock critical senders without deadlock"
+    );
+
+    // Drain first event
+    assert!(rx.recv().await.is_some());
 }
 
 #[test]

@@ -200,9 +200,16 @@ impl AgentSession {
     }
 
     /// Apply an incoming SessionLifecycleEvent to the session.
-    /// Validates FSM transition legality, verifies timestamp freshness,
-    /// increments the internal monotonic sequence number, and updates activity timestamps.
+    /// Validates FSM transition legality, verifies timestamp monotonicity against `last_seen_at`,
+    /// preserves terminal state immunity, increments the internal monotonic sequence number, and updates activity timestamps.
     pub fn apply_lifecycle_event(&mut self, event: &SessionLifecycleEvent) -> Result<(), String> {
+        if self.current_state.is_terminal() {
+            return Err(format!(
+                "Rejected event: session is already in terminal state {}",
+                self.current_state
+            ));
+        }
+
         match event {
             SessionLifecycleEvent::StateTransition {
                 new_state,
@@ -210,19 +217,23 @@ impl AgentSession {
                 timestamp,
                 ..
             } => {
-                if *timestamp < self.state_entered_at {
+                if *timestamp < self.last_seen_at {
                     return Err(format!(
-                        "Dropped stale event: event timestamp {} is before state_entered_at {}",
-                        timestamp, self.state_entered_at
+                        "Dropped stale event: event timestamp {} is before session last_seen_at {}",
+                        timestamp, self.last_seen_at
                     ));
                 }
                 let next_seq = self.sequence_number + 1;
                 self.transition_to_at(*new_state, next_seq, *tool_category, *timestamp)
             }
             SessionLifecycleEvent::Heartbeat { timestamp, .. } => {
-                if *timestamp >= self.last_seen_at {
-                    self.last_seen_at = *timestamp;
+                if *timestamp < self.last_seen_at {
+                    return Err(format!(
+                        "Dropped stale heartbeat: timestamp {} is before session last_seen_at {}",
+                        timestamp, self.last_seen_at
+                    ));
                 }
+                self.last_seen_at = *timestamp;
                 Ok(())
             }
             SessionLifecycleEvent::SessionTerminated {
@@ -230,10 +241,10 @@ impl AgentSession {
                 timestamp,
                 ..
             } => {
-                if *timestamp < self.state_entered_at {
+                if *timestamp < self.last_seen_at {
                     return Err(format!(
-                        "Dropped stale termination: timestamp {} is before state_entered_at {}",
-                        timestamp, self.state_entered_at
+                        "Dropped stale termination: timestamp {} is before session last_seen_at {}",
+                        timestamp, self.last_seen_at
                     ));
                 }
                 let target = match exit_code {
@@ -354,5 +365,61 @@ impl SessionRegistry {
     pub async fn count(&self) -> usize {
         let map = self.sessions.read().await;
         map.len()
+    }
+}
+
+/// Result of processing a SessionLifecycleEvent against the session registry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EventProcessingOutcome {
+    /// Valid state transition was accepted and applied to the session.
+    Applied {
+        session_id: String,
+        new_state: LifecycleState,
+    },
+    /// Heartbeat was accepted and updated session activity timestamp.
+    HeartbeatApplied { session_id: String },
+    /// Explicitly dropped: event referenced an unknown session.
+    DroppedUnknownSession { session_id: String },
+    /// Explicitly dropped: event violated FSM transition legality or was temporally stale.
+    DroppedInvalidTransition { session_id: String, error: String },
+}
+
+/// Process a SessionLifecycleEvent against the SessionRegistry with explicit rejection semantics.
+/// - Valid events update the session in the registry and return `Applied` or `HeartbeatApplied`.
+/// - Unknown-session events return `DroppedUnknownSession` without mutating registry or aggregate state.
+/// - Illegal transitions or stale timestamps return `DroppedInvalidTransition`.
+pub async fn process_lifecycle_event(
+    registry: &SessionRegistry,
+    event: &SessionLifecycleEvent,
+) -> EventProcessingOutcome {
+    let session_id = event.session_id();
+    let mut session = match registry.get(session_id).await {
+        Some(s) => s,
+        None => {
+            return EventProcessingOutcome::DroppedUnknownSession {
+                session_id: session_id.to_string(),
+            };
+        }
+    };
+
+    match session.apply_lifecycle_event(event) {
+        Ok(()) => {
+            let new_state = session.current_state;
+            registry.upsert(session).await;
+            if matches!(event, SessionLifecycleEvent::Heartbeat { .. }) {
+                EventProcessingOutcome::HeartbeatApplied {
+                    session_id: session_id.to_string(),
+                }
+            } else {
+                EventProcessingOutcome::Applied {
+                    session_id: session_id.to_string(),
+                    new_state,
+                }
+            }
+        }
+        Err(e) => EventProcessingOutcome::DroppedInvalidTransition {
+            session_id: session_id.to_string(),
+            error: e,
+        },
     }
 }

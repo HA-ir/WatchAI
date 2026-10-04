@@ -45,9 +45,9 @@ fn test_valid_state_transition_via_lifecycle_event() {
 
 #[test]
 fn test_stale_event_rejected_by_timestamp() {
-    // T115: Event timestamp older than state_entered_at must be rejected
+    // T115: Event timestamp older than last_seen_at must be rejected
     let mut session = create_test_session();
-    let old_time = session.state_entered_at - Duration::seconds(10);
+    let old_time = session.last_seen_at - Duration::seconds(10);
 
     let event = SessionLifecycleEvent::StateTransition {
         session_id: session.session_id.clone(),
@@ -59,13 +59,150 @@ fn test_stale_event_rejected_by_timestamp() {
     let result = session.apply_lifecycle_event(&event);
     assert!(
         result.is_err(),
-        "Event older than state_entered_at must be rejected"
+        "Event older than last_seen_at must be rejected"
     );
     assert_eq!(
         session.current_state,
         LifecycleState::Idle,
         "State must not change on stale event"
     );
+}
+
+#[test]
+fn test_older_state_transition_relative_to_last_seen_at_rejected() {
+    // Audit Finding 3: state_entered_at = 10, last_seen_at = 20, event timestamp = 15
+    let mut session = create_test_session();
+    let t10 = Utc::now();
+    session
+        .apply_lifecycle_event(&SessionLifecycleEvent::StateTransition {
+            session_id: session.session_id.clone(),
+            new_state: LifecycleState::Working,
+            tool_category: None,
+            timestamp: t10,
+        })
+        .unwrap();
+
+    let t20 = t10 + Duration::seconds(10);
+    session
+        .apply_lifecycle_event(&SessionLifecycleEvent::Heartbeat {
+            session_id: session.session_id.clone(),
+            timestamp: t20,
+        })
+        .unwrap();
+    assert_eq!(session.state_entered_at, t10);
+    assert_eq!(session.last_seen_at, t20);
+
+    // Event timestamp = t15 (between state_entered_at and last_seen_at)
+    let t15 = t10 + Duration::seconds(5);
+    let stale_event = SessionLifecycleEvent::StateTransition {
+        session_id: session.session_id.clone(),
+        new_state: LifecycleState::Waiting,
+        tool_category: None,
+        timestamp: t15,
+    };
+
+    let result = session.apply_lifecycle_event(&stale_event);
+    assert!(
+        result.is_err(),
+        "Event with timestamp < last_seen_at must be rejected even if >= state_entered_at"
+    );
+    assert_eq!(
+        session.current_state,
+        LifecycleState::Working,
+        "State must not be modified by temporally stale event"
+    );
+}
+
+#[test]
+fn test_older_heartbeat_and_termination_rejected() {
+    let mut session = create_test_session();
+    let t10 = Utc::now();
+    session.last_seen_at = t10;
+
+    let t_past = t10 - Duration::seconds(5);
+    // Older heartbeat rejected
+    let stale_hb = SessionLifecycleEvent::Heartbeat {
+        session_id: session.session_id.clone(),
+        timestamp: t_past,
+    };
+    assert!(session.apply_lifecycle_event(&stale_hb).is_err());
+    assert_eq!(session.last_seen_at, t10);
+
+    // Older termination rejected
+    let stale_term = SessionLifecycleEvent::SessionTerminated {
+        session_id: session.session_id.clone(),
+        exit_code: Some(0),
+        timestamp: t_past,
+    };
+    assert!(session.apply_lifecycle_event(&stale_term).is_err());
+    assert_eq!(session.current_state, LifecycleState::Idle);
+}
+
+#[test]
+fn test_equal_timestamp_state_transition_accepted() {
+    let mut session = create_test_session();
+    let now = session.last_seen_at;
+
+    let event = SessionLifecycleEvent::StateTransition {
+        session_id: session.session_id.clone(),
+        new_state: LifecycleState::Working,
+        tool_category: None,
+        timestamp: now,
+    };
+
+    let result = session.apply_lifecycle_event(&event);
+    assert!(result.is_ok(), "Equal timestamp must be accepted");
+    assert_eq!(session.current_state, LifecycleState::Working);
+}
+
+#[test]
+fn test_terminal_state_rejects_subsequent_events() {
+    let mut session = create_test_session();
+    let now = Utc::now();
+    // Transition Idle -> Working -> Success
+    session
+        .apply_lifecycle_event(&SessionLifecycleEvent::StateTransition {
+            session_id: session.session_id.clone(),
+            new_state: LifecycleState::Working,
+            tool_category: None,
+            timestamp: now,
+        })
+        .unwrap();
+
+    let term_time = now + Duration::seconds(1);
+    session
+        .apply_lifecycle_event(&SessionLifecycleEvent::SessionTerminated {
+            session_id: session.session_id.clone(),
+            exit_code: Some(0),
+            timestamp: term_time,
+        })
+        .unwrap();
+    assert_eq!(session.current_state, LifecycleState::Success);
+
+    // Any subsequent event must be rejected
+    let later = term_time + Duration::seconds(10);
+    let post_terminal_transition = SessionLifecycleEvent::StateTransition {
+        session_id: session.session_id.clone(),
+        new_state: LifecycleState::Working,
+        tool_category: None,
+        timestamp: later,
+    };
+    assert!(
+        session
+            .apply_lifecycle_event(&post_terminal_transition)
+            .is_err(),
+        "Terminal session must reject subsequent state transitions"
+    );
+
+    let post_terminal_hb = SessionLifecycleEvent::Heartbeat {
+        session_id: session.session_id.clone(),
+        timestamp: later,
+    };
+    assert!(
+        session.apply_lifecycle_event(&post_terminal_hb).is_err(),
+        "Terminal session must reject subsequent heartbeats"
+    );
+    assert_eq!(session.current_state, LifecycleState::Success);
 }
 
 #[test]
