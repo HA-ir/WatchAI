@@ -226,53 +226,63 @@ fn test_synthetic_scaling_benchmark_under_fifty_ms() {
     );
 }
 
-#[test]
-fn test_concrete_adapters_receive_and_retain_event_sink() {
-    // Concrete Phase 8 adapters retain EventSink upon attachment
-    let claude = Arc::new(ClaudeCodeAdapter::new());
-    let codex = Arc::new(CodexCliAdapter::new());
-    let opencode = Arc::new(OpenCodeAdapter::new());
+struct RecordingTelemetryAdapter {
+    sink: std::sync::RwLock<Option<EventSink>>,
+}
 
-    assert!(claude.event_sink().is_none());
-    assert!(codex.event_sink().is_none());
-    assert!(opencode.event_sink().is_none());
+impl RecordingTelemetryAdapter {
+    fn new() -> Self {
+        Self {
+            sink: std::sync::RwLock::new(None),
+        }
+    }
 
-    let (tx, _rx) = tokio::sync::mpsc::channel(16);
-    let sink = EventSink::new(tx, None);
+    fn is_attached(&self) -> bool {
+        self.sink.read().unwrap().is_some()
+    }
+}
 
-    claude.attach_event_sink(sink.clone());
-    codex.attach_event_sink(sink.clone());
-    opencode.attach_event_sink(sink.clone());
+#[async_trait::async_trait]
+impl ProviderAdapter for RecordingTelemetryAdapter {
+    fn provider_id(&self) -> &'static str {
+        "recording-telemetry"
+    }
 
-    assert!(claude.event_sink().is_some());
-    assert!(codex.event_sink().is_some());
-    assert!(opencode.event_sink().is_some());
+    fn display_name(&self) -> &'static str {
+        "Recording Telemetry"
+    }
+
+    fn attach_event_sink(&self, sink: EventSink) {
+        *self.sink.write().unwrap() = Some(sink);
+    }
+
+    async fn check_environment(&self) -> AdapterStatus {
+        AdapterStatus::Active
+    }
+
+    async fn discover_sessions(&self) -> Vec<watchai_adapters::traits::DiscoveredSession> {
+        Vec::new()
+    }
 }
 
 #[test]
 fn test_registry_distributes_sink_on_attach_and_subsequent_register() {
-    // AdapterRegistry broadcasts EventSink to existing adapters and on new registration
     let mut registry = AdapterRegistry::new();
-    let claude = Arc::new(ClaudeCodeAdapter::new());
-    registry.register(claude.clone());
+    let adapter1 = Arc::new(RecordingTelemetryAdapter::new());
+    registry.register(adapter1.clone());
 
-    assert!(claude.event_sink().is_none());
+    assert!(!adapter1.is_attached());
 
     let (tx, _rx) = tokio::sync::mpsc::channel(16);
     let sink = EventSink::new(tx, None);
     registry.attach_event_sink(sink.clone());
 
-    assert!(claude.event_sink().is_some());
+    assert!(adapter1.is_attached());
 
-    // Register codex and opencode AFTER registry has received the sink
-    let codex = Arc::new(CodexCliAdapter::new());
-    let opencode = Arc::new(OpenCodeAdapter::new());
-    assert!(codex.event_sink().is_none());
-    assert!(opencode.event_sink().is_none());
+    // Register adapter2 AFTER registry has received the sink
+    let adapter2 = Arc::new(RecordingTelemetryAdapter::new());
+    assert!(!adapter2.is_attached());
 
-    registry.register(codex.clone());
-    registry.register(opencode.clone());
-
-    assert!(codex.event_sink().is_some());
-    assert!(opencode.event_sink().is_some());
+    registry.register(adapter2.clone());
+    assert!(adapter2.is_attached());
 }

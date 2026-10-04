@@ -1,4 +1,4 @@
-use async_trait::async_trait;
+pub use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -156,11 +156,6 @@ pub trait ProviderAdapter: Send + Sync {
     /// Attach an EventSink handle to the adapter.
     /// Default no-op for ProcessDiscoveryOnly adapters.
     fn attach_event_sink(&self, _sink: EventSink) {}
-
-    /// Retrieve the attached EventSink if retained by this adapter.
-    fn event_sink(&self) -> Option<EventSink> {
-        None
-    }
 
     /// Probe the local environment for executable presence, config files, and hook readiness.
     async fn check_environment(&self) -> AdapterStatus;

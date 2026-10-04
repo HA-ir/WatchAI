@@ -64,3 +64,60 @@ impl AdapterRegistry {
         &self.adapters
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use watchai_core::session::AdapterStatus;
+
+    struct TestRecordingAdapter {
+        attached: Arc<AtomicBool>,
+    }
+
+    #[async_trait::async_trait]
+    impl ProviderAdapter for TestRecordingAdapter {
+        fn provider_id(&self) -> &'static str {
+            "test-recording"
+        }
+        fn display_name(&self) -> &'static str {
+            "Test Recording"
+        }
+        fn attach_event_sink(&self, _sink: EventSink) {
+            self.attached.store(true, Ordering::SeqCst);
+        }
+        async fn check_environment(&self) -> AdapterStatus {
+            AdapterStatus::Active
+        }
+        async fn discover_sessions(&self) -> Vec<DiscoveredSession> {
+            Vec::new()
+        }
+    }
+
+    #[test]
+    fn test_registry_distributes_event_sink_to_adapters() {
+        let mut registry = AdapterRegistry::new();
+        let flag = Arc::new(AtomicBool::new(false));
+        let adapter = Arc::new(TestRecordingAdapter {
+            attached: flag.clone(),
+        });
+        registry.register(adapter);
+
+        assert!(!flag.load(Ordering::SeqCst));
+
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let sink = EventSink::new(tx, None);
+        registry.attach_event_sink(sink);
+
+        assert!(flag.load(Ordering::SeqCst));
+
+        // Register adapter post-attach
+        let post_flag = Arc::new(AtomicBool::new(false));
+        let post_adapter = Arc::new(TestRecordingAdapter {
+            attached: post_flag.clone(),
+        });
+        registry.register(post_adapter);
+
+        assert!(post_flag.load(Ordering::SeqCst));
+    }
+}

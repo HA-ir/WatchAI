@@ -16,11 +16,6 @@ impl CodexCliAdapter {
             event_sink: RwLock::new(None),
         }
     }
-
-    /// Retrieve the attached EventSink if present.
-    pub fn event_sink(&self) -> Option<EventSink> {
-        self.event_sink.read().ok().and_then(|g| g.clone())
-    }
 }
 
 impl Default for CodexCliAdapter {
@@ -47,10 +42,6 @@ impl ProviderAdapter for CodexCliAdapter {
         if let Ok(mut guard) = self.event_sink.write() {
             *guard = Some(sink);
         }
-    }
-
-    fn event_sink(&self) -> Option<EventSink> {
-        self.event_sink.read().ok().and_then(|g| g.clone())
     }
 
     async fn check_environment(&self) -> AdapterStatus {
@@ -81,5 +72,22 @@ impl ProviderAdapter for CodexCliAdapter {
             self.provider_id(),
             self.display_name(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_codex_adapter_retains_attached_event_sink() {
+        let adapter = CodexCliAdapter::new();
+        assert!(adapter.event_sink.read().unwrap().is_none());
+
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let sink = EventSink::new(tx, None);
+
+        adapter.attach_event_sink(sink);
+        assert!(adapter.event_sink.read().unwrap().is_some());
     }
 }

@@ -16,11 +16,6 @@ impl ClaudeCodeAdapter {
             event_sink: RwLock::new(None),
         }
     }
-
-    /// Retrieve the attached EventSink if present.
-    pub fn event_sink(&self) -> Option<EventSink> {
-        self.event_sink.read().ok().and_then(|g| g.clone())
-    }
 }
 
 impl Default for ClaudeCodeAdapter {
@@ -49,10 +44,6 @@ impl ProviderAdapter for ClaudeCodeAdapter {
         }
     }
 
-    fn event_sink(&self) -> Option<EventSink> {
-        self.event_sink.read().ok().and_then(|g| g.clone())
-    }
-
     async fn check_environment(&self) -> AdapterStatus {
         // Check if `claude` binary is in PATH
         if let Ok(path) = std::env::var("PATH") {
@@ -78,5 +69,22 @@ impl ProviderAdapter for ClaudeCodeAdapter {
     async fn discover_sessions(&self) -> Vec<DiscoveredSession> {
         // Use non-invasive /proc scanner targeting "claude"
         ProcessScanner::scan_processes("claude", self.provider_id(), self.display_name())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_claude_adapter_retains_attached_event_sink() {
+        let adapter = ClaudeCodeAdapter::new();
+        assert!(adapter.event_sink.read().unwrap().is_none());
+
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let sink = EventSink::new(tx, None);
+
+        adapter.attach_event_sink(sink);
+        assert!(adapter.event_sink.read().unwrap().is_some());
     }
 }
