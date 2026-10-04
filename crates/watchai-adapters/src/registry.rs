@@ -1,4 +1,6 @@
 use crate::claude_code::ClaudeCodeAdapter;
+use crate::codex_cli::CodexCliAdapter;
+use crate::opencode::OpenCodeAdapter;
 use crate::traits::{DiscoveredSession, ProviderAdapter};
 use std::sync::Arc;
 
@@ -24,6 +26,8 @@ impl AdapterRegistry {
     pub fn default_registry() -> Self {
         let mut reg = Self::new();
         reg.register(Arc::new(ClaudeCodeAdapter::new()));
+        reg.register(Arc::new(CodexCliAdapter::new()));
+        reg.register(Arc::new(OpenCodeAdapter::new()));
         reg
     }
 

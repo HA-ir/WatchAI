@@ -1,5 +1,5 @@
 use crate::discovery::ProcessScanner;
-use crate::traits::{DiscoveredSession, ProviderAdapter};
+use crate::traits::{DiscoveredSession, ProviderAdapter, ProviderCapabilities};
 use async_trait::async_trait;
 use tracing::debug;
 use watchai_core::session::AdapterStatus;
@@ -27,6 +27,10 @@ impl ProviderAdapter for ClaudeCodeAdapter {
 
     fn display_name(&self) -> &'static str {
         "Claude Code"
+    }
+
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities::process_discovery_only()
     }
 
     async fn check_environment(&self) -> AdapterStatus {

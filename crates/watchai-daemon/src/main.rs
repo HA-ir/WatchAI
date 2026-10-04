@@ -3,17 +3,19 @@ mod sync;
 use chrono::Utc;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 use watchai_adapters::registry::AdapterRegistry;
 use watchai_core::liveness::{
     prune_retained_sessions, run_liveness_cycle, RealProcStatReader,
     LIVENESS_CHECK_INTERVAL_SECONDS,
 };
-use watchai_core::session::{AgentSession, SessionRegistry};
+use watchai_core::session::{AgentSession, SessionLifecycleEvent, SessionRegistry};
 use watchai_ipc::dbus_service::{WatchAiDbusService, BUS_NAME, OBJECT_PATH};
 use watchai_ipc::protocol::SessionDto;
 
 use crate::sync::sync_aggregate_state;
+
+pub const EVENT_CHANNEL_CAPACITY: usize = 256;
 
 /// Rate-limiter to prevent log saturation during persistent errors or signal failures.
 pub struct RateLimiter {
@@ -38,6 +40,31 @@ impl RateLimiter {
         }
         self.last_emitted.insert(key.to_string(), now);
         true
+    }
+}
+
+/// Ingest a SessionLifecycleEvent into the bounded channel with prioritized backpressure.
+/// Critical events (StateTransition, SessionTerminated) await channel reservation;
+/// Heartbeats drop/coalesce when channel utilization exceeds 80% capacity to preserve buffer headroom.
+pub async fn ingest_event(
+    tx: &tokio::sync::mpsc::Sender<SessionLifecycleEvent>,
+    event: SessionLifecycleEvent,
+) -> Result<(), String> {
+    if event.is_critical() {
+        tx.send(event)
+            .await
+            .map_err(|e| format!("Failed to deliver critical lifecycle event: {}", e))
+    } else {
+        let cap = tx.capacity();
+        if cap < 50 {
+            trace!(
+                "Dropping heartbeat under event channel pressure (capacity: {})",
+                cap
+            );
+            return Ok(());
+        }
+        let _ = tx.try_send(event);
+        Ok(())
     }
 }
 
@@ -92,10 +119,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let dbus_service = WatchAiDbusService::new(registry.clone());
     let aggregate_lock = dbus_service.aggregate();
 
-    // 1. Immediate startup /proc discovery sweep before starting background tasks (T075, T076, T077)
-    info!("Performing immediate startup /proc discovery sweep...");
+    // 0. Startup environment health diagnostics across all registered adapters (T113)
+    for adapter in adapter_registry.adapters() {
+        let status = adapter.check_environment().await;
+        info!(
+            "Adapter [{}] ({}) environment status: {:?}",
+            adapter.provider_id(),
+            adapter.display_name(),
+            status
+        );
+    }
+
+    // 1. Immediate startup /proc discovery sweep across all registered providers before D-Bus claim (T075, T076, T077, T120)
+    info!("Performing immediate startup /proc discovery sweep across all providers...");
     let mut startup_discovered = adapter_registry.discover_all().await;
-    // Deterministic sorting of surviving processes: provider_id ASC, project_path ASC, process_id ASC (T076)
+    // Canonical deterministic sorting: provider_id ASC, project_path ASC, process_id ASC (T076, T120)
     startup_discovered.sort_by(|a, b| a.deterministic_cmp(b));
 
     for d in startup_discovered {
@@ -152,6 +190,75 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Shutdown coordination channel
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
 
+    // Initialize bounded asynchronous event ingestion channel (T116, T117)
+    let (event_tx, mut event_rx) =
+        tokio::sync::mpsc::channel::<SessionLifecycleEvent>(EVENT_CHANNEL_CAPACITY);
+
+    let ingest_registry = registry.clone();
+    let ingest_agg = aggregate_lock.clone();
+    let ingest_iface = iface_ref.clone();
+    let mut ingest_shutdown_rx = shutdown_tx.subscribe();
+
+    // Spawn asynchronous event ingestion consumer task (T116, T117)
+    let ingest_handle = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                maybe_event = event_rx.recv() => {
+                    match maybe_event {
+                        Some(event) => {
+                            let now = Utc::now();
+                            let session_id = event.session_id().to_string();
+                            if let Some(mut session) = ingest_registry.get(&session_id).await {
+                                if let Err(e) = session.apply_lifecycle_event(&event) {
+                                    debug!("Rejected lifecycle event for {}: {}", session_id, e);
+                                    continue;
+                                }
+                                ingest_registry.upsert(session.clone()).await;
+
+                                let dto = SessionDto::from(&session);
+                                if let Err(e) = WatchAiDbusService::emit_session_updated(
+                                    ingest_iface.signal_context(),
+                                    &dto,
+                                ).await {
+                                    warn!("Failed to emit SessionUpdated signal: {}", e);
+                                }
+
+                                if let Some(agg_dto) = sync_aggregate_state(&ingest_registry, &ingest_agg, now).await {
+                                    if let Err(e) = WatchAiDbusService::emit_aggregate_state_changed(
+                                        ingest_iface.signal_context(),
+                                        &agg_dto.state,
+                                        agg_dto.active_session_count,
+                                        agg_dto.waiting_session_count,
+                                        agg_dto.error_session_count,
+                                        &agg_dto.updated_at,
+                                    ).await {
+                                        warn!("Failed to emit AggregateStateChanged signal: {}", e);
+                                    }
+                                }
+                            } else {
+                                debug!("Received lifecycle event for unknown session: {}", session_id);
+                            }
+                        }
+                        None => break, // All event senders dropped
+                    }
+                }
+                _ = ingest_shutdown_rx.changed() => {
+                    // Drain remaining critical events on shutdown (T119)
+                    while let Ok(event) = event_rx.try_recv() {
+                        if event.is_critical() {
+                            let session_id = event.session_id().to_string();
+                            if let Some(mut session) = ingest_registry.get(&session_id).await {
+                                let _ = session.apply_lifecycle_event(&event);
+                                ingest_registry.upsert(session).await;
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+    });
+
     // Spawn unified liveness, discovery, retention, and dwell loop (T062–T065)
     let loop_handle = tokio::spawn(async move {
         let mut interval =
@@ -191,8 +298,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
 
-                    // C. Periodic process discovery sweep for new sessions
-                    let discovered = bg_adapters.discover_all().await;
+                    // C. Periodic process discovery sweep for new sessions across all providers
+                    let mut discovered = bg_adapters.discover_all().await;
+                    discovered.sort_by(|a, b| a.deterministic_cmp(b));
+
                     for d in discovered {
                         if bg_registry.get(&d.session_id).await.is_none() {
                             info!(
@@ -260,11 +369,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("WatchAI Daemon is running. Monitoring agent sessions (SIGINT / SIGTERM to stop).");
 
-    // Graceful shutdown handling (T066)
+    // Graceful shutdown handling (T066, T119)
     wait_for_shutdown_signal().await;
     info!("Initiating clean termination of background workers...");
     let _ = shutdown_tx.send(true);
     let _ = loop_handle.await;
+    drop(event_tx); // Drop daemon event sender to allow consumer to finish
+    let _ = ingest_handle.await;
     info!("All background tasks terminated. WatchAI Daemon shutdown complete.");
 
     Ok(())

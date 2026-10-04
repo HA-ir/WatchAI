@@ -22,3 +22,7 @@ path = "quickstart_scenarios_test.rs"
 [[test]]
 name = "crash_recovery_test"
 path = "crash_recovery_test.rs"
+
+[[test]]
+name = "multi_provider_test"
+path = "multi_provider_test.rs"
