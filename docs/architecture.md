@@ -121,3 +121,34 @@ Adapters communicate with the daemon engine through a bounded `tokio::sync::mpsc
 - **Critical Transitions (`StateTransition`, `SessionTerminated`)**: Use `.send().await` under cooperative cancellation, ensuring guaranteed delivery without silent drops.
 - **Telemetry Heartbeats (`Heartbeat`)**: Use non-blocking `try_send()`. Coalesced or dropped when channel capacity exceeds 80% utilization to guarantee buffer headroom for critical state transitions.
 - **Event Ordering**: State transitions validate timestamp monotonicity against `session.state_entered_at` and increment the daemon's internal `sequence_number`.
+
+## systemd --user Service & Desktop Lifecycle Integration (Phase 9)
+
+### 1. User-Space Service Architecture (`Type=notify` + `BusName`)
+WatchAI runs as an unprivileged systemd user service (`systemd/watchai.service`), bound to the graphical desktop session:
+- **Unit Configuration**: `PartOf=graphical-session.target`, `After=graphical-session.target`. User D-Bus socket activation is ordered implicitly via `BusName=org.freedesktop.WatchAI`, avoiding distribution-specific service dependencies (such as `dbus.service` vs. `dbus-broker.service`).
+- **D-Bus & Readiness Dual Barrier**: Uses `Type=notify` paired with `BusName=org.freedesktop.WatchAI`. In systemd, this configuration requires **both** `sd_notify("READY=1")` to be received and the D-Bus bus name to be acquired before systemd declares the service active.
+- **Auto-Restart**: `Restart=on-failure` with `RestartSec=2s` under `Slice=session.slice`.
+- **Least-Privilege Isolation**: Pure user-space execution with zero root or `sudo` requirements.
+
+### 2. Deterministic Startup Readiness & Status Notification
+- **Readiness Notification**: Communicates with systemd via `NOTIFY_SOCKET` using `sd_notify("READY=1")`, `STATUS=...`, and `STOPPING=1`. Note: WatchAI implements lifecycle notification; periodic watchdog heartbeats (`WATCHDOG=1`) are not configured in Phase 9.
+- **Strict Startup Ordering**: `READY=1` is sent **only after** all startup phases complete: adapter environment checks, initial `/proc` recovery sweeps, D-Bus service publication, and background task loops are fully operational.
+- **Graceful Fallback**: When launched outside systemd (manual execution, unit tests, containerized CI), the notifier detects the absence of `NOTIFY_SOCKET` and cleanly operates as a no-op without errors or panics.
+
+### 3. Graceful Signal Handling & Bounded D-Bus Name Release
+- **Signals Handled**: Traps `SIGTERM` and `SIGINT` (Ctrl+C) asynchronously.
+- **D-Bus Disconnect Notice**: On shutdown initiation, the daemon calls `connection.release_name(BUS_NAME)`. This causes the D-Bus broker to emit `NameOwnerChanged(BUS_NAME, old_owner, "")`. Connected clients (like the GNOME Shell extension) immediately transition to `OFFLINE`.
+- **Bounded Worker Drain**: Background liveness and event ingestion tasks receive a cooperative shutdown broadcast, draining any remaining critical events with an explicit 5.0-second timeout guarantee before bus name release.
+- **Systemd Termination Notification**: Emits `sd_notify("STOPPING=1")` before exiting cleanly.
+- **Re-entrant Signal Protection**: Repeated signals during drain are logged without aborting cleanup.
+
+### 4. Line-Buffered Structured Logging & Zero-Leakage Privacy Redaction
+- **Structured Tracing**: Built on `tracing` with configurable filter levels (`RUST_LOG`).
+- **Line-Buffered Privacy Redaction**: Log output passes through a line-buffered `RedactingWriter` that buffers partial chunks until complete newline-delimited lines are formed, preventing sensitive tokens from crossing chunk boundaries unredacted. The scrubber automatically redacts:
+  - API keys (`sk-ant-...`, `sk-...`).
+  - Bearer tokens (`Bearer <token>`).
+  - Key-value secrets (`password=...`, `token=...`, `secret=...`, `api_key=...`).
+  - Prompt payloads (`prompt=...`).
+  - Code diffs and patch lines (`diff --git ...`).
+- **Operational Clarity**: Preserves non-sensitive operational diagnostics (session counts, lifecycle states, process IDs, timing benchmarks, indented JSON/log formats).
