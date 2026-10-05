@@ -152,3 +152,37 @@ WatchAI runs as an unprivileged systemd user service (`systemd/watchai.service`)
   - Prompt payloads (`prompt=...`).
   - Code diffs and patch lines (`diff --git ...`).
 - **Operational Clarity**: Preserves non-sensitive operational diagnostics (session counts, lifecycle states, process IDs, timing benchmarks, indented JSON/log formats).
+
+## Configuration, Notifications & Accessibility Polish (Phase 10)
+
+### 1. GSettings Configuration & Schema Architecture
+WatchAI integrates with the GNOME desktop configuration system via GSettings (`extension/schemas/org.gnome.shell.extensions.watchai.gschema.xml`):
+- **Schema ID**: `org.gnome.shell.extensions.watchai` under path `/org/gnome/shell/extensions/watchai/`.
+- **Preference Keys**:
+  - `dwell-duration-seconds` (`type="u"`, `<range min="1" max="60"/>`, default `10`): Configured baseline completion dwell expectation.
+  - `enable-desktop-notifications` (`type="b"`, default `true`): Master switch for desktop notifications.
+  - `notify-on-waiting` (`type="b"`, default `true`): Toggles alerts when an agent enters `WAITING` requiring user input or approval.
+  - `notify-on-error` (`type="b"`, default `true`): Toggles alerts when an agent enters `ERROR` or crashes.
+  - `indicator-icon-style` (`type="s"`, `<choices><choice value="symbolic"/><choice value="colored"/></choices>`, default `'symbolic'`): Visual presentation style of the indicator icon.
+- **Informational Dwell Boundary**: The backend daemon (`watchai-core`) remains the sole authority for lifecycle state transitions and aggregate completion dwell (`COMPLETION_DWELL_SECONDS = 10`). The extension respects daemon-emitted signals directly and does NOT synthesize client-side dwell delays, preventing UI-daemon state divergence.
+- **SettingsManager & Headless Fallback**: `SettingsManager` in `extension/settings.js` wraps GNOME 45+ ESM `this.getSettings()`, tracks all `changed::` signal IDs for leak-free disconnection in `disable()`, and provides an in-memory `FallbackSettings` adapter for headless testing when `gschemas.compiled` is unavailable. Invalid icon style strings deterministically fall back to `'symbolic'`.
+
+### 2. Edge-Triggered Desktop Notifications & 5.0-Second Cooldown
+The desktop notification engine (`NotificationManager` in `extension/notifications.js`) is designed to eliminate alert spam while ensuring critical blocking states are surfaced promptly:
+- **Edge-Triggered State Gating**: Notifications are dispatched strictly upon an actual state transition entering `WAITING` or `ERROR` ($S_{t-1} \neq S_t$). Transitions into non-alert states (`WORKING`, `SUCCESS`, `STARTING`, `CANCELLED`, `UNKNOWN`, `IDLE`) never notify.
+- **Identical-State Suppression**: Repeated metadata updates or heartbeats keeping an agent in `WAITING` or `ERROR` are suppressed.
+- **5.0-Second Per-Session Cooldown**: If an alert transition occurs within $< 5.0\text{s}$ of the previous notification for that session, the notification is suppressed immediately.
+- **Immediate Suppression / No-Queue Policy**: Suppressed notifications are discarded and are NOT queued or replayed when the cooldown expires, preventing confusing delayed alerts.
+- **Per-Session Isolation**: Cooldown timestamps are tracked independently per `sessionId`. Alert events in Session A never throttle or delay notifications for Session B.
+- **Session Cleanup**: When a session is removed (`onSessionRemoved`), all tracking state in `NotificationManager` is purged immediately to prevent memory leaks.
+- **Zero-Leakage Privacy & Sanitization**: Notifications strictly display generic static templates (`"Agent is waiting for user input or approval."` / `"Agent encountered an error or crashed."`) with sanitized project workspace names (`sanitizeProjectName()`). Prompts, tool arguments, diffs, code snippets, credentials, and full filesystem paths are strictly excluded.
+
+### 3. Comprehensive AT-SPI Screen Reader Accessibility
+The extension provides full, standardized AT-SPI accessibility across all UI elements:
+- **AT-SPI Roles**: Top-bar indicator button exposes `Atk.Role.TOGGLE_BUTTON` / `PUSH_BUTTON`; popover menu container exposes `Atk.Role.MENU`; session cards expose `Atk.Role.PANEL`.
+- **Accessible Names across All 8 States**: Top-bar indicator exposes unambiguous descriptive accessible names for `IDLE`, `STARTING`, `WORKING`, `WAITING`, `SUCCESS`, `ERROR`, `CANCELLED`, and `UNKNOWN`.
+- **Dynamic Multi-Session Counter**: When `activeCount > 1`, the indicator's accessible name dynamically appends `" (${activeCount} active sessions)"`.
+- **Offline Announcement**: When disconnected from the daemon, the indicator announces `"WatchAI daemon offline"`.
+- **Accessible Help Description**: Indicator button exposes accessible description `"Click to open agent session popover menu"`.
+- **Session Card Structured Descriptions**: Each session card exposes an accessible name formatted as `"${providerDisplayName}, ${sanitizedProjectName}, state ${currentState}, duration ${formattedDuration}"` and an accessible description detailing process ID and active tool category when present.
+- **Badge Exclusion**: The top-bar session count badge is excluded from the AT-SPI tree when active session count is $\le 1$ to prevent redundant screen reader speech output.

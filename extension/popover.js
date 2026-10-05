@@ -1,10 +1,11 @@
+import Atk from 'gi://Atk';
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
 import GLib from 'gi://GLib';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
-import { formatDuration, getStatePriority } from './utils.js';
+import { formatDuration, getStatePriority, sanitizeProjectName } from './utils.js';
 
-export { formatDuration, getStatePriority };
+export { formatDuration, getStatePriority, sanitizeProjectName };
 
 export class WatchAISessionCard {
     constructor(session) {
@@ -15,6 +16,17 @@ export class WatchAISessionCard {
             style_class: `watchai-session-card watchai-card-${session.currentState.toLowerCase()}`,
             reactive: true,
         });
+
+        // Set AT-SPI role for session card: PANEL (T065, FR-025)
+        // Prefer direct actor API, falling back defensively to get_accessible().set_role()
+        if (typeof this.actor.set_accessible_role === 'function') {
+            this.actor.set_accessible_role(Atk.Role.PANEL);
+        } else if (typeof this.actor.get_accessible === 'function') {
+            const acc = this.actor.get_accessible();
+            if (acc && typeof acc.set_role === 'function') {
+                acc.set_role(Atk.Role.PANEL);
+            }
+        }
 
         // Top Row: Provider, State Badge, Elapsed Duration
         const topRow = new St.BoxLayout({
@@ -43,12 +55,13 @@ export class WatchAISessionCard {
         topRow.add_child(this._stateBadge);
         topRow.add_child(this._durationLabel);
 
-        // Bottom Row: Workspace Name, PID, Active Tool
+        // Bottom Row: Sanitized Workspace Name, PID, Active Tool
         const bottomRow = new St.BoxLayout({
             style_class: 'watchai-card-bottom-row',
         });
 
-        let detailText = `📂 ${session.projectName || 'workspace'}`;
+        const safeProject = sanitizeProjectName(session.projectName);
+        let detailText = `📂 ${safeProject}`;
         if (session.processId && session.processId > 0) {
             detailText += `  •  PID: ${session.processId}`;
         }
@@ -66,6 +79,37 @@ export class WatchAISessionCard {
 
         this.actor.add_child(topRow);
         this.actor.add_child(bottomRow);
+
+        this._updateAccessibility();
+    }
+
+    _updateAccessibility() {
+        const provider = this.session.providerDisplayName || this.session.providerId || 'AI Agent';
+        const project = sanitizeProjectName(this.session.projectName);
+        const state = this.session.currentState || 'UNKNOWN';
+        const duration = formatDuration(this.session.startedAt);
+
+        // Set structured accessible name (T065, FR-025)
+        const a11yName = `${provider}, ${project}, state ${state}, duration ${duration}`;
+        if (typeof this.actor.set_accessible_name === 'function') {
+            this.actor.set_accessible_name(a11yName);
+        }
+
+        // Set accessible description for PID / active tool (T065, FR-026)
+        const descParts = [];
+        if (this.session.processId && this.session.processId > 0) {
+            descParts.push(`Process ID ${this.session.processId}`);
+        }
+        if (this.session.activeToolCategory && this.session.activeToolCategory.length > 0) {
+            descParts.push(`active tool ${this.session.activeToolCategory}`);
+        }
+        const a11yDesc = descParts.join(', ');
+        if (typeof this.actor.get_accessible === 'function') {
+            const acc = this.actor.get_accessible();
+            if (acc && typeof acc.set_description === 'function') {
+                acc.set_description(a11yDesc);
+            }
+        }
     }
 
     setOfflineMode(isOffline) {
@@ -80,6 +124,7 @@ export class WatchAISessionCard {
             this.actor.style_class = `watchai-session-card watchai-card-${this.session.currentState.toLowerCase()}`;
             this.updateDuration();
         }
+        this._updateAccessibility();
     }
 
     update(session) {
@@ -96,7 +141,8 @@ export class WatchAISessionCard {
             this.actor.style_class = `watchai-session-card watchai-card-${session.currentState.toLowerCase()}`;
         }
 
-        let detailText = `📂 ${session.projectName || 'workspace'}`;
+        const safeProject = sanitizeProjectName(session.projectName);
+        let detailText = `📂 ${safeProject}`;
         if (session.processId && session.processId > 0) {
             detailText += `  •  PID: ${session.processId}`;
         }
@@ -105,11 +151,13 @@ export class WatchAISessionCard {
         }
         this._detailLabel.text = detailText;
         this.updateDuration();
+        this._updateAccessibility();
     }
 
     updateDuration() {
         if (this._isOffline) return;
         this._durationLabel.text = formatDuration(this.session.startedAt);
+        this._updateAccessibility();
     }
 }
 
@@ -124,6 +172,22 @@ export class WatchAISessionPopover {
     }
 
     _buildUI() {
+        // Set AT-SPI role and name on popover menu (T065, FR-024)
+        // Prefer direct actor API, falling back defensively to get_accessible().set_role()
+        if (this._menu && this._menu.actor) {
+            if (typeof this._menu.actor.set_accessible_name === 'function') {
+                this._menu.actor.set_accessible_name('WatchAI Agent Sessions');
+            }
+            if (typeof this._menu.actor.set_accessible_role === 'function') {
+                this._menu.actor.set_accessible_role(Atk.Role.MENU);
+            } else if (typeof this._menu.actor.get_accessible === 'function') {
+                const acc = this._menu.actor.get_accessible();
+                if (acc && typeof acc.set_role === 'function') {
+                    acc.set_role(Atk.Role.MENU);
+                }
+            }
+        }
+
         // Section Header
         this._headerSection = new PopupMenu.PopupMenuSection();
         const headerBox = new St.BoxLayout({ style_class: 'watchai-popover-header' });

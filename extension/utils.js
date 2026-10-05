@@ -43,6 +43,49 @@ export const ConnectionState = {
     RECONNECTING: 'RECONNECTING',
 };
 
+export const STATE_CONFIG = {
+    IDLE: {
+        icon: 'system-run-symbolic',
+        cssClass: 'watchai-state-idle',
+        accessibleDesc: 'WatchAI: No active coding agents',
+    },
+    STARTING: {
+        icon: 'process-working-symbolic',
+        cssClass: 'watchai-state-starting',
+        accessibleDesc: 'WatchAI: Agent session initializing',
+    },
+    WORKING: {
+        icon: 'media-playback-start-symbolic',
+        cssClass: 'watchai-state-working',
+        accessibleDesc: 'WatchAI: Agent actively executing work',
+    },
+    WAITING: {
+        icon: 'dialog-warning-symbolic',
+        cssClass: 'watchai-state-waiting',
+        accessibleDesc: 'WatchAI: Agent blocked waiting for user approval',
+    },
+    SUCCESS: {
+        icon: 'emblem-ok-symbolic',
+        cssClass: 'watchai-state-success',
+        accessibleDesc: 'WatchAI: Agent task completed successfully',
+    },
+    ERROR: {
+        icon: 'dialog-error-symbolic',
+        cssClass: 'watchai-state-error',
+        accessibleDesc: 'WatchAI: Agent encountered an error',
+    },
+    CANCELLED: {
+        icon: 'process-stop-symbolic',
+        cssClass: 'watchai-state-cancelled',
+        accessibleDesc: 'WatchAI: Agent session cancelled',
+    },
+    UNKNOWN: {
+        icon: 'dialog-question-symbolic',
+        cssClass: 'watchai-state-unknown',
+        accessibleDesc: 'WatchAI: Agent state unverified',
+    },
+};
+
 export const HANDSHAKE_TIMEOUT_MS = 5000;
 export const INITIAL_INTERVAL_MS = 1000;
 export const MAX_INTERVAL_MS = 30000;
@@ -79,4 +122,35 @@ export function unpackSessionDto(s) {
         processId: Number(s[7]) || 0,
         activeToolCategory: String(s[8] || ''),
     };
+}
+
+/// Defensively sanitize workspace project names for safe presentation in desktop
+/// notifications and accessibility labels. Strips control characters, newlines,
+/// markup characters, limits length to 32 characters, and falls back to 'workspace'.
+export function sanitizeProjectName(rawName) {
+    if (!rawName || typeof rawName !== 'string') {
+        return 'workspace';
+    }
+
+    // 1. Strip newlines, CR, tabs, and non-printable control characters
+    let cleaned = rawName.replace(/[\x00-\x1F\x7F]/g, '');
+
+    // 2. Strip HTML/XML/Pango markup characters (<, >, &)
+    cleaned = cleaned.replace(/[<>&]/g, '');
+
+    // 3. Trim whitespace
+    cleaned = cleaned.trim();
+
+    // 4. Truncate to maximum 32 Unicode code points (prevents splitting surrogate pairs)
+    const codePoints = Array.from(cleaned);
+    if (codePoints.length > 32) {
+        cleaned = codePoints.slice(0, 32).join('').trim();
+    }
+
+    // 5. Fallback to 'workspace' if empty after sanitization
+    if (cleaned.length === 0) {
+        return 'workspace';
+    }
+
+    return cleaned;
 }
