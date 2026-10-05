@@ -85,9 +85,7 @@ impl ProcessScanner {
         provider_id: &'static str,
         provider_display_name: &'static str,
     ) -> Vec<DiscoveredSession> {
-        let proc_root = std::env::var("WATCHAI_PROC_ROOT")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("/proc"));
+        let proc_root = watchai_core::liveness::resolve_proc_root();
         Self::scan_proc_dir_multi(
             &proc_root,
             target_binaries,

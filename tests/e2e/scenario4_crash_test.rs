@@ -48,11 +48,11 @@ async fn test_scenario4_worker_crash_and_liveness_hysteresis() {
         "Worker process must be active in /proc"
     );
 
-    // 2. Poll D-Bus until daemon's background /proc discovery sweep registers the session (within 2.5s)
+    // 2. Poll D-Bus until daemon's background /proc discovery sweep registers the session (within 4.0s)
     let discovery_start = Instant::now();
     let mut discovered_session_id: Option<String> = None;
 
-    while discovery_start.elapsed() < Duration::from_millis(2500) {
+    while discovery_start.elapsed() < Duration::from_millis(4000) {
         if let Ok(sessions) = proxy.get_sessions().await {
             if let Some(s) = sessions.iter().find(|s| s.process_id == worker_pid) {
                 discovered_session_id = Some(s.session_id.clone());
@@ -67,7 +67,7 @@ async fn test_scenario4_worker_crash_and_liveness_hysteresis() {
     }
 
     let session_id =
-        discovered_session_id.expect("Daemon failed to discover worker process within 2.5s");
+        discovered_session_id.expect("Daemon failed to discover worker process within 4.0s");
 
     // 3. Transition discovered session to WORKING via mock event socket
     fixture

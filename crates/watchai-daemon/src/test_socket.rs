@@ -113,16 +113,28 @@ pub async fn run_test_socket_listener(
         let _ = fs::remove_file(&socket_path);
     }
 
-    // 2. Ensure parent directory exists
+    // 2. Ensure parent directory exists with restricted 0700 permissions
     if let Some(parent) = socket_path.parent() {
         if !parent.exists() {
             fs::create_dir_all(parent)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
+            }
         }
     }
 
     // 3. Bind Unix listener
     info!("Binding test event socket at: {:?}", socket_path);
     let listener = UnixListener::bind(&socket_path)?;
+
+    // Restrict test socket file to 0600 (owner read/write only)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600));
+    }
 
     // 4. Main accept loop with graceful shutdown monitoring
     loop {
@@ -297,5 +309,48 @@ mod tests {
 
         let _ = shutdown_tx.send(true);
         let _ = listener_handle.await;
+    }
+
+    #[tokio::test]
+    async fn test_socket_permissions_restricted_to_owner() {
+        let parent_dir = std::env::temp_dir().join(format!(
+            "watchai-perm-dir-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let socket_path = parent_dir.join("test.sock");
+        let (event_tx, _event_rx) = mpsc::channel(16);
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
+        let listener_path = socket_path.clone();
+        let listener_handle = tokio::spawn(async move {
+            run_test_socket_listener(listener_path, event_tx, shutdown_rx).await
+        });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let parent_meta = fs::metadata(&parent_dir).expect("Parent dir must exist");
+            let parent_mode = parent_meta.permissions().mode() & 0o777;
+            assert_eq!(
+                parent_mode, 0o700,
+                "Parent directory mode must be restricted to 0700"
+            );
+
+            let socket_meta = fs::metadata(&socket_path).expect("Socket file must exist");
+            let socket_mode = socket_meta.permissions().mode() & 0o777;
+            assert_eq!(
+                socket_mode, 0o600,
+                "Socket file mode must be restricted to 0600"
+            );
+        }
+
+        let _ = shutdown_tx.send(true);
+        let _ = listener_handle.await;
+        let _ = fs::remove_dir_all(&parent_dir);
     }
 }

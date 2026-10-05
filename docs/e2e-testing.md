@@ -39,6 +39,7 @@ WatchAI provides an isolated, deterministic, and 100% headless End-to-End (E2E) 
 4. **Leak-Proof Child Cleanup (`ChildGuard`)**: All child processes (`watchai-daemon`, `dbus-daemon`, mock workers) are managed via Linux process groups (`setpgid(0, 0)`). RAII `Drop` sends `SIGTERM` followed by bounded `SIGKILL` and reaps child processes via `wait()`.
 5. **Authentic 10-Second Completion Dwell**: Scenario 2 evaluates the authentic, unmodified production 10-second completion dwell window (`COMPLETION_DWELL_SECONDS = 10`) via bounded polling without artificial test overrides.
 6. **Zero-Leakage Privacy**: Mock events and assertions strictly adhere to the metadata-only boundary. No prompts, diffs, tool parameters, or credentials enter the mock protocol.
+7. **Test-Scoped `/proc` Isolation (`WATCHAI_PROC_ROOT`)**: For isolated E2E test runs, `WATCHAI_PROC_ROOT` may be configured by test fixtures to point the daemon's discovery scanner and liveness reader to an isolated directory, preventing active host AI coding agent processes from contaminating test runs. When unset or empty (normal production and systemd user execution), the daemon operates exclusively against standard Linux `/proc` without configuration changes.
 
 ---
 
