@@ -1,5 +1,3 @@
-mod sync;
-
 use chrono::Utc;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -14,10 +12,11 @@ use watchai_core::session::{
     process_lifecycle_event, AgentSession, EventProcessingOutcome, SessionLifecycleEvent,
     SessionRegistry,
 };
+use watchai_daemon::logging;
+use watchai_daemon::sync::sync_aggregate_state;
+use watchai_daemon::systemd::SystemdNotifier;
 use watchai_ipc::dbus_service::{WatchAiDbusService, BUS_NAME, OBJECT_PATH};
 use watchai_ipc::protocol::SessionDto;
-
-use crate::sync::sync_aggregate_state;
 
 pub const EVENT_CHANNEL_CAPACITY: usize = 256;
 
@@ -83,16 +82,12 @@ pub async fn wait_for_shutdown_signal() {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize structured logging
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info,watchai_daemon=debug,watchai_adapters=debug".into()),
-        )
-        .init();
+    // Initialize structured logging with automated privacy redaction filters (T061)
+    logging::init_logging();
 
     info!("Starting WatchAI Daemon v0.1.0...");
 
+    let notifier = SystemdNotifier::from_env();
     let registry = SessionRegistry::new();
     let mut adapter_registry = AdapterRegistry::default_registry();
     let dbus_service = WatchAiDbusService::new(registry.clone());
@@ -156,8 +151,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Obtain interface reference for signal emission
-    let object_server = connection.object_server();
-    let iface_ref = object_server
+    let iface_ref = connection
+        .clone()
+        .object_server()
         .interface::<_, WatchAiDbusService>(OBJECT_PATH)
         .await?;
 
@@ -353,13 +349,44 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("WatchAI Daemon is running. Monitoring agent sessions (SIGINT / SIGTERM to stop).");
 
-    // Graceful shutdown handling (T066, T119)
+    // Report ready to systemd ONLY after initialization, discovery, and worker loops are running (T059)
+    let initial_sessions_count = registry.count().await;
+    let _ = notifier.notify_status(&format!("Monitoring {} session(s)", initial_sessions_count));
+    if let Err(e) = notifier.notify_ready() {
+        warn!("Failed to send systemd READY notification: {}", e);
+    } else if notifier.is_available() {
+        info!("Successfully signaled systemd readiness (READY=1)");
+    }
+
+    // Graceful shutdown handling (T060, T119)
     wait_for_shutdown_signal().await;
+    let _ = notifier.notify_stopping();
     info!("Initiating clean termination of background workers...");
+
+    // Spawn auxiliary listener allowing immediate force exit if user signals a second time during drain
+    let force_exit_handle = tokio::spawn(async {
+        let _ = tokio::signal::ctrl_c().await;
+        warn!("Received second shutdown signal during drain. Forcing immediate termination.");
+        std::process::exit(130);
+    });
+
     let _ = shutdown_tx.send(true);
     let _ = loop_handle.await;
     drop(event_tx); // Drop daemon event sender to allow consumer to finish
     let _ = ingest_handle.await;
+    force_exit_handle.abort();
+
+    // Release D-Bus bus name cleanly so broker broadcasts NameOwnerChanged(old, "") to clients (T060)
+    info!("Releasing D-Bus bus name '{}'...", BUS_NAME);
+    if let Err(e) = connection.release_name(BUS_NAME).await {
+        warn!(
+            "Failed to cleanly release D-Bus bus name '{}': {}",
+            BUS_NAME, e
+        );
+    } else {
+        info!("Successfully released D-Bus bus name '{}'", BUS_NAME);
+    }
+
     info!("All background tasks terminated. WatchAI Daemon shutdown complete.");
 
     Ok(())

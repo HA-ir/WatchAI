@@ -1279,7 +1279,9 @@ dependencies = [
  "tokio",
  "watchai-adapters",
  "watchai-core",
+ "watchai-daemon",
  "watchai-ipc",
+ "zbus",
 ]
 
 [[package]]

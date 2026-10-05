@@ -8,8 +8,10 @@ license.workspace = true
 watchai-core = { path = "../crates/watchai-core" }
 watchai-adapters = { path = "../crates/watchai-adapters" }
 watchai-ipc = { path = "../crates/watchai-ipc" }
+watchai-daemon = { path = "../crates/watchai-daemon" }
 tokio = { workspace = true, features = ["full", "test-util"] }
 chrono.workspace = true
+zbus.workspace = true
 
 [[test]]
 name = "us1_single_session_flow_test"
@@ -26,3 +28,7 @@ path = "crash_recovery_test.rs"
 [[test]]
 name = "multi_provider_test"
 path = "multi_provider_test.rs"
+
+[[test]]
+name = "systemd_lifecycle_test"
+path = "systemd_lifecycle_test.rs"

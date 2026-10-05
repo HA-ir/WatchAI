@@ -165,10 +165,10 @@ description: "Actionable implementation task breakdown for WatchAI Baseline Agen
 
 **Purpose**: Package the daemon as a first-class Linux user-space service integrated with desktop session lifecycle.
 
-- [ ] T058 Create systemd user service unit file (`Type=dbus`, `BusName=org.freedesktop.WatchAI`, `Restart=on-failure`) in `systemd/watchai.service`.
-- [ ] T059 Implement systemd watchdog and ready notification (`sd_notify("READY=1")`) in daemon bootstrap in `crates/watchai-daemon/src/main.rs`.
-- [ ] T060 Implement graceful OS signal handling (`SIGTERM`, `SIGINT`) emitting D-Bus disconnect notices and releasing bus name in `crates/watchai-daemon/src/main.rs`.
-- [ ] T061 [P] Implement structured logging via `tracing` with prompt and token redaction filters in `crates/watchai-daemon/src/logging.rs`.
+- [x] T058 Create systemd user service unit file (`Type=dbus`, `BusName=org.freedesktop.WatchAI`, `Restart=on-failure`) in `systemd/watchai.service`.
+- [x] T059 Implement systemd watchdog and ready notification (`sd_notify("READY=1")`) in daemon bootstrap in `crates/watchai-daemon/src/main.rs`.
+- [x] T060 Implement graceful OS signal handling (`SIGTERM`, `SIGINT`) emitting D-Bus disconnect notices and releasing bus name in `crates/watchai-daemon/src/main.rs`.
+- [x] T061 [P] Implement structured logging via `tracing` with prompt and token redaction filters in `crates/watchai-daemon/src/logging.rs`.
 
 ---
 
