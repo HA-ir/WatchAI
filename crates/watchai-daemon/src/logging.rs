@@ -234,7 +234,8 @@ fn redact_code_diffs(input: &str) -> String {
         if in_diff_hunk {
             if line.starts_with('+')
                 || line.starts_with('-')
-                || (line.starts_with(' ') && !line.starts_with("   "))
+                || line.is_empty()
+                || (line.starts_with(' ') && !line.starts_with("  "))
             {
                 continue;
             } else {
@@ -298,13 +299,16 @@ impl<W: Write> Write for RedactingWriter<W> {
             self.line_buf.extend_from_slice(remainder);
 
             // Bounded safety limit: if a single line exceeds 64KB without newline,
-            // process and flush to prevent unbounded memory growth.
+            // process and flush prefix while keeping a tail buffer to avoid splitting secrets.
             const MAX_LINE_BUF: usize = 65536;
+            const TAIL_KEEP: usize = 256;
             if self.line_buf.len() > MAX_LINE_BUF {
-                let text = String::from_utf8_lossy(&self.line_buf);
+                let split_at = self.line_buf.len().saturating_sub(TAIL_KEEP);
+                let to_flush = &self.line_buf[..split_at];
+                let text = String::from_utf8_lossy(to_flush);
                 let redacted = redact_sensitive_text(&text);
                 self.inner.write_all(redacted.as_bytes())?;
-                self.line_buf.clear();
+                self.line_buf.drain(..split_at);
             }
         }
 
@@ -535,6 +539,33 @@ mod tests {
         writer.flush().unwrap();
         let result = String::from_utf8(shared.0.lock().unwrap().clone()).unwrap();
         assert!(!result.contains("unflushed123"));
+        assert!(result.contains("token=[REDACTED]"));
+    }
+
+    #[test]
+    fn test_redact_code_diff_with_empty_lines_in_hunk() {
+        let raw = "diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -1,4 +1,4 @@\n context\n\n+secret_code_line\n";
+        let cleaned = redact_sensitive_text(raw);
+        assert!(!cleaned.contains("secret_code_line"));
+        assert!(cleaned.contains("[REDACTED_CODE_DIFF]"));
+    }
+
+    #[test]
+    fn test_chunk_boundary_secret_splitting_around_large_buffer() {
+        // Edge case B: 64KB boundary secret splitting
+        let mut output = Vec::new();
+        let mut writer = RedactingWriter::new(&mut output);
+
+        // Fill exactly 65530 bytes with harmless 'a' characters, then end with 'token=abc'
+        let mut chunk1 = vec![b'a'; 65530];
+        chunk1.extend_from_slice(b" token=abc"); // brings length to 65540 > 65536
+        writer.write_all(&chunk1).unwrap();
+
+        // Write the second chunk containing the rest of the secret and a newline
+        writer.write_all(b"defsecret123\n").unwrap();
+
+        let result = String::from_utf8(output).unwrap();
+        assert!(!result.contains("abcdefsecret123"));
         assert!(result.contains("token=[REDACTED]"));
     }
 }
