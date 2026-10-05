@@ -31,7 +31,8 @@ pub struct RealProcStatReader;
 
 impl ProcStatReader for RealProcStatReader {
     fn read_stat(&self, pid: u32) -> Result<String, Error> {
-        let path = format!("/proc/{}/stat", pid);
+        let proc_root = std::env::var("WATCHAI_PROC_ROOT").unwrap_or_else(|_| "/proc".to_string());
+        let path = format!("{}/{}/stat", proc_root, pid);
         fs::read_to_string(Path::new(&path))
     }
 }

@@ -10,3 +10,6 @@ watchai-ipc = { path = "../watchai-ipc" }
 tokio.workspace = true
 zbus.workspace = true
 chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+nix.workspace = true

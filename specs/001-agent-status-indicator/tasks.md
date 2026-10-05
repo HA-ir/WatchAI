@@ -187,11 +187,11 @@ description: "Actionable implementation task breakdown for WatchAI Baseline Agen
 
 **Purpose**: Build a dedicated simulation harness (`watchai-mock`) and automate end-to-end testing against all scenarios in `quickstart.md`.
 
-- [ ] T066 Implement `watchai-mock` CLI binary to simulate provider lifecycle events without requiring real AI agents in `crates/watchai-mock/src/main.rs`.
-- [ ] T067 [P] Automate Quickstart Scenario 1 (daemon startup & D-Bus registration check) in `tests/e2e/scenario1_startup_test.rs`.
-- [ ] T068 [P] Automate Quickstart Scenario 2 (mock session lifecycle progression) in `tests/e2e/scenario2_lifecycle_test.rs`.
-- [ ] T069 [P] Automate Quickstart Scenario 3 (multi-session priority conflict resolution) in `tests/e2e/scenario3_aggregation_test.rs`.
-- [ ] T070 [P] Automate Quickstart Scenario 4 (ungraceful process crash detection) in `tests/e2e/scenario4_crash_test.rs`.
+- [x] T066 Implement `watchai-mock` CLI binary to simulate provider lifecycle events without requiring real AI agents in `crates/watchai-mock/src/main.rs`.
+- [x] T067 [P] Automate Quickstart Scenario 1 (daemon startup & D-Bus registration check) in `tests/e2e/scenario1_startup_test.rs`.
+- [x] T068 [P] Automate Quickstart Scenario 2 (mock session lifecycle progression) in `tests/e2e/scenario2_lifecycle_test.rs`.
+- [x] T069 [P] Automate Quickstart Scenario 3 (multi-session priority conflict resolution) in `tests/e2e/scenario3_aggregation_test.rs`.
+- [x] T070 [P] Automate Quickstart Scenario 4 (ungraceful process crash detection) in `tests/e2e/scenario4_crash_test.rs`.
 
 ---
 
