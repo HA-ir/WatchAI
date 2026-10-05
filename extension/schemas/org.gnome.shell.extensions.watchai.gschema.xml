@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist gettext-domain="watchai">
+  <schema id="org.gnome.shell.extensions.watchai" path="/org/gnome/shell/extensions/watchai/">
+    <key name="dwell-duration-seconds" type="u">
+      <range min="1" max="60"/>
+      <default>10</default>
+      <summary>Completion dwell duration</summary>
+      <description>Configured baseline completion dwell duration in seconds (1-60).</description>
+    </key>
+    <key name="enable-desktop-notifications" type="b">
+      <default>true</default>
+      <summary>Enable desktop notifications</summary>
+      <description>Master switch to enable or disable desktop notifications for agent lifecycle transitions.</description>
+    </key>
+    <key name="notify-on-waiting" type="b">
+      <default>true</default>
+      <summary>Notify on waiting for approval</summary>
+      <description>Dispatch a notification when an agent enters WAITING requiring user interaction or approval.</description>
+    </key>
+    <key name="notify-on-error" type="b">
+      <default>true</default>
+      <summary>Notify on error or crash</summary>
+      <description>Dispatch a notification when an agent enters ERROR or crashes.</description>
+    </key>
+    <key name="indicator-icon-style" type="s">
+      <choices>
+        <choice value="symbolic"/>
+        <choice value="colored"/>
+      </choices>
+      <default>'symbolic'</default>
+      <summary>Top-bar indicator icon style</summary>
+      <description>Visual presentation style of the indicator icon: 'symbolic' (monochrome desktop theme) or 'colored' (state-colored accents).</description>
+    </key>
+  </schema>
+</schemalist>

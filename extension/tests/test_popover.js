@@ -1,5 +1,5 @@
 // GJS test for WatchAI Popover logic: duration formatting, priority sorting, and state handling
-import { formatDuration, getStatePriority } from '../utils.js';
+import { formatDuration, getStatePriority, sanitizeProjectName } from '../utils.js';
 
 function testFormatDuration() {
     // Test null / invalid input
@@ -127,11 +127,42 @@ function testMultiProviderPopoverRendering() {
     print('✓ Multi-provider display name rendering and fallback verified.');
 }
 
+function testPopoverCardAccessibilityAndSanitization() {
+    const rawPathological = 'MyProject\n\t<unsafe>&dir';
+    const cleaned = sanitizeProjectName(rawPathological);
+    if (cleaned !== 'MyProjectunsafedir') {
+        throw new Error(`Expected 'MyProjectunsafedir', got '${cleaned}'`);
+    }
+
+    const longProj = 'this-is-a-very-long-project-workspace-directory-name-that-exceeds-32-chars';
+    const capped = sanitizeProjectName(longProj);
+    const codePointCount = Array.from(capped).length;
+    if (codePointCount > 32) {
+        throw new Error(`Project name must be capped at 32 code points, got ${codePointCount}`);
+    }
+    if (capped !== 'this-is-a-very-long-project-work') {
+        throw new Error(`Expected 'this-is-a-very-long-project-work', got '${capped}'`);
+    }
+
+    // Emoji at boundary
+    const emojiBoundary = '1234567890123456789012345678901' + '⚡'; // 31 chars + emoji = 32 code points
+    const cleanedEmoji = sanitizeProjectName(emojiBoundary);
+    if (Array.from(cleanedEmoji).length !== 32) {
+        throw new Error(`Expected exactly 32 code points, got ${Array.from(cleanedEmoji).length}`);
+    }
+    if (!cleanedEmoji.endsWith('⚡')) {
+        throw new Error(`Expected emoji preserved at end of 32-char string`);
+    }
+
+    print('✓ Popover card project name sanitization and Unicode code-point safety verified.');
+}
+
 try {
     testFormatDuration();
     testGetStatePriority();
     testCardSortingLogic();
     testMultiProviderPopoverRendering();
+    testPopoverCardAccessibilityAndSanitization();
     print('All popover GJS tests passed successfully!');
 } catch (e) {
     printerr('Test failed: ' + e);

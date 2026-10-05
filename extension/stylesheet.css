@@ -8,7 +8,62 @@
     icon-size: 16px;
 }
 
-/* State Accents and Icon Coloring */
+/* Presentation Icon Modes (T063, T131) */
+.watchai-icon-symbolic {
+    color: inherit;
+}
+
+.watchai-icon-symbolic.watchai-state-idle {
+    opacity: 0.55;
+    color: inherit;
+}
+
+.watchai-icon-symbolic.watchai-state-offline {
+    opacity: 0.35;
+    color: inherit;
+}
+
+.watchai-icon-colored.watchai-state-idle {
+    opacity: 0.55;
+    color: #9a9996;
+}
+
+.watchai-icon-colored.watchai-state-starting {
+    color: #3584e4;
+}
+
+.watchai-icon-colored.watchai-state-working {
+    color: #f6d32d;
+}
+
+.watchai-icon-colored.watchai-state-waiting {
+    color: #e01b24;
+    font-weight: bold;
+}
+
+.watchai-icon-colored.watchai-state-success {
+    color: #33d17a;
+}
+
+.watchai-icon-colored.watchai-state-error {
+    color: #c01c28;
+    font-weight: bold;
+}
+
+.watchai-icon-colored.watchai-state-cancelled {
+    color: #77767b;
+}
+
+.watchai-icon-colored.watchai-state-unknown {
+    color: #9a9996;
+}
+
+.watchai-icon-colored.watchai-state-offline {
+    opacity: 0.35;
+    color: #77767b;
+}
+
+/* State Accents and Base Icon Coloring */
 .watchai-state-idle {
     opacity: 0.55;
     color: #9a9996;

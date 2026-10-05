@@ -2,10 +2,15 @@ import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import { WatchAIIndicator } from './indicator.js';
 import { WatchAIDbusClient } from './dbus_client.js';
+import { SettingsManager } from './settings.js';
 
 export default class WatchAIExtension extends Extension {
     enable() {
-        this._indicator = new WatchAIIndicator();
+        // Initialize GSettings preferences manager (T063)
+        this._settings = new SettingsManager(this);
+
+        // Pass settings manager into top-bar indicator
+        this._indicator = new WatchAIIndicator(this._settings);
 
         this._dbusClient = new WatchAIDbusClient({
             onConnected: (payload) => {
@@ -41,18 +46,27 @@ export default class WatchAIExtension extends Extension {
                 }
             },
             onSessionAdded: (session) => {
-                if (this._indicator && this._indicator.popover) {
-                    this._indicator.popover.addSession(session);
+                if (this._indicator) {
+                    if (this._indicator.popover) {
+                        this._indicator.popover.addSession(session);
+                    }
+                    this._indicator.notifySessionUpdated(session);
                 }
             },
             onSessionUpdated: (session) => {
-                if (this._indicator && this._indicator.popover) {
-                    this._indicator.popover.updateSession(session);
+                if (this._indicator) {
+                    if (this._indicator.popover) {
+                        this._indicator.popover.updateSession(session);
+                    }
+                    this._indicator.notifySessionUpdated(session);
                 }
             },
             onSessionRemoved: (sessionId) => {
-                if (this._indicator && this._indicator.popover) {
-                    this._indicator.popover.removeSession(sessionId);
+                if (this._indicator) {
+                    if (this._indicator.popover) {
+                        this._indicator.popover.removeSession(sessionId);
+                    }
+                    this._indicator.notifySessionRemoved(sessionId);
                 }
             },
         });
@@ -69,6 +83,11 @@ export default class WatchAIExtension extends Extension {
         if (this._indicator) {
             this._indicator.destroy();
             this._indicator = null;
+        }
+
+        if (this._settings) {
+            this._settings.destroy();
+            this._settings = null;
         }
     }
 }

@@ -176,10 +176,10 @@ description: "Actionable implementation task breakdown for WatchAI Baseline Agen
 
 **Purpose**: Implement user preferences via GSettings, optional desktop notifications, and AT-SPI accessibility enhancements.
 
-- [ ] T062 Create GSettings schema definition (`org.gnome.shell.extensions.watchai.gschema.xml`) covering dwell duration, notification toggles, and icon mode in `extension/schemas/org.gnome.shell.extensions.watchai.gschema.xml`.
-- [ ] T063 Compile and bind GSettings preferences inside the GNOME extension in `extension/extension.js`.
-- [ ] T064 Implement optional desktop notifications with rate-limiting when an agent transitions into `WAITING` or `ERROR` in `extension/indicator.js`.
-- [ ] T065 Verify and refine AT-SPI accessible descriptions across all top-bar and popover widgets in `extension/indicator.js` and `extension/popover.js`.
+- [x] T062 Create GSettings schema definition (`org.gnome.shell.extensions.watchai.gschema.xml`) covering dwell duration, notification toggles, and icon mode in `extension/schemas/org.gnome.shell.extensions.watchai.gschema.xml`.
+- [x] T063 Compile and bind GSettings preferences inside the GNOME extension in `extension/extension.js`.
+- [x] T064 Implement optional desktop notifications with rate-limiting when an agent transitions into `WAITING` or `ERROR` in `extension/indicator.js`.
+- [x] T065 Verify and refine AT-SPI accessible descriptions across all top-bar and popover widgets in `extension/indicator.js` and `extension/popover.js`.
 
 ---
 
