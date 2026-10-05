@@ -2,10 +2,10 @@
 Description=WatchAI AI Agent Activity Monitor Daemon
 Documentation=https://github.com/HA-ir/WatchAI
 PartOf=graphical-session.target
-After=graphical-session.target dbus.service
+After=graphical-session.target
 
 [Service]
-Type=dbus
+Type=notify
 BusName=org.freedesktop.WatchAI
 ExecStart=/usr/bin/watchai-daemon
 Restart=on-failure

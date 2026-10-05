@@ -209,24 +209,36 @@ fn redact_prompts(input: &str) -> String {
 
 fn redact_code_diffs(input: &str) -> String {
     let mut lines = Vec::new();
-    let mut in_diff = false;
+    let mut in_diff_header = false;
+    let mut in_diff_hunk = false;
 
     for line in input.lines() {
         if line.starts_with("diff --git ")
             || line.starts_with("--- a/")
             || line.starts_with("+++ b/")
-            || line.starts_with("@@ ")
+            || line.starts_with("index ")
         {
-            in_diff = true;
+            in_diff_header = true;
+            in_diff_hunk = false;
             lines.push("[REDACTED_CODE_DIFF]");
             continue;
         }
 
-        if in_diff {
-            if line.starts_with('+') || line.starts_with('-') || line.starts_with(' ') {
+        if in_diff_header && line.starts_with("@@ ") {
+            in_diff_header = false;
+            in_diff_hunk = true;
+            lines.push("[REDACTED_CODE_DIFF]");
+            continue;
+        }
+
+        if in_diff_hunk {
+            if line.starts_with('+')
+                || line.starts_with('-')
+                || (line.starts_with(' ') && !line.starts_with("   "))
+            {
                 continue;
             } else {
-                in_diff = false;
+                in_diff_hunk = false;
             }
         }
 
@@ -242,26 +254,70 @@ fn redact_code_diffs(input: &str) -> String {
     }
 }
 
-/// A writer wrapper that automatically sanitizes and redacts all output passing through it.
+/// A line-buffered writer wrapper that automatically sanitizes and redacts all output passing through it.
+/// Buffers partial chunks across write() calls so that sensitive tokens split across buffer boundaries
+/// are reliably reconstituted and redacted without leakage.
 pub struct RedactingWriter<W> {
     inner: W,
+    line_buf: Vec<u8>,
 }
 
 impl<W> RedactingWriter<W> {
     pub fn new(inner: W) -> Self {
-        Self { inner }
+        Self {
+            inner,
+            line_buf: Vec::new(),
+        }
     }
 }
 
 impl<W: Write> Write for RedactingWriter<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let text = String::from_utf8_lossy(buf);
-        let redacted = redact_sensitive_text(&text);
-        self.inner.write_all(redacted.as_bytes())?;
+        let mut start = 0;
+
+        for (i, &b) in buf.iter().enumerate() {
+            if b == b'\n' {
+                let chunk = &buf[start..=i];
+                if self.line_buf.is_empty() {
+                    let text = String::from_utf8_lossy(chunk);
+                    let redacted = redact_sensitive_text(&text);
+                    self.inner.write_all(redacted.as_bytes())?;
+                } else {
+                    self.line_buf.extend_from_slice(chunk);
+                    let text = String::from_utf8_lossy(&self.line_buf);
+                    let redacted = redact_sensitive_text(&text);
+                    self.inner.write_all(redacted.as_bytes())?;
+                    self.line_buf.clear();
+                }
+                start = i + 1;
+            }
+        }
+
+        if start < buf.len() {
+            let remainder = &buf[start..];
+            self.line_buf.extend_from_slice(remainder);
+
+            // Bounded safety limit: if a single line exceeds 64KB without newline,
+            // process and flush to prevent unbounded memory growth.
+            const MAX_LINE_BUF: usize = 65536;
+            if self.line_buf.len() > MAX_LINE_BUF {
+                let text = String::from_utf8_lossy(&self.line_buf);
+                let redacted = redact_sensitive_text(&text);
+                self.inner.write_all(redacted.as_bytes())?;
+                self.line_buf.clear();
+            }
+        }
+
         Ok(buf.len())
     }
 
     fn flush(&mut self) -> io::Result<()> {
+        if !self.line_buf.is_empty() {
+            let text = String::from_utf8_lossy(&self.line_buf);
+            let redacted = redact_sensitive_text(&text);
+            self.inner.write_all(redacted.as_bytes())?;
+            self.line_buf.clear();
+        }
         self.inner.flush()
     }
 }
@@ -352,6 +408,21 @@ mod tests {
     }
 
     #[test]
+    fn test_redact_code_diff_preserves_subsequent_indented_logs() {
+        let raw = "diff --git a/src/main.rs b/src/main.rs\n--- a/src/main.rs\n+++ b/src/main.rs\n@@ -1,3 +1,3 @@\n-let x = 1;\n+let x = 2;\n    Operational indented diagnostic log\n";
+        let cleaned = redact_sensitive_text(raw);
+        assert!(cleaned.contains("    Operational indented diagnostic log"));
+    }
+
+    #[test]
+    fn test_ordinary_indented_logs_preserved() {
+        let raw =
+            "Session summary:\n    \"active_sessions\": 2,\n    \"current_state\": \"WORKING\"\n";
+        let cleaned = redact_sensitive_text(raw);
+        assert_eq!(raw, cleaned, "Ordinary indented logs must not be swallowed");
+    }
+
+    #[test]
     fn test_non_sensitive_operational_logs_preserved() {
         let raw = "Discovered surviving session on startup: provider=claude-code, id=proc-12345678, state=IDLE, active=1";
         let cleaned = redact_sensitive_text(raw);
@@ -359,16 +430,111 @@ mod tests {
     }
 
     #[test]
-    fn test_redacting_writer_output() {
-        let mut buf = Vec::new();
-        let mut writer = RedactingWriter::new(&mut buf);
-        let log_line = b"User logged in with token=abcde12345 secret=xyz9876\n";
-        writer.write_all(log_line).unwrap();
+    fn test_chunk_boundary_secret_splitting() {
+        // Requirement 1.1: Secret split across two writes
+        let mut output = Vec::new();
+        let mut writer = RedactingWriter::new(&mut output);
 
-        let output = String::from_utf8(buf).unwrap();
-        assert!(!output.contains("abcde12345"));
-        assert!(!output.contains("xyz9876"));
-        assert!(output.contains("token=[REDACTED]"));
-        assert!(output.contains("secret=[REDACTED]"));
+        writer.write_all(b"User config token=abc").unwrap();
+        writer.write_all(b"def12345\n").unwrap();
+
+        let result = String::from_utf8(output).unwrap();
+        assert!(!result.contains("abcdef12345"));
+        assert!(result.contains("token=[REDACTED]"));
+    }
+
+    #[test]
+    fn test_chunk_boundary_api_key_prefix_splitting() {
+        // Requirement 1.2: API key prefix split across writes
+        let mut output = Vec::new();
+        let mut writer = RedactingWriter::new(&mut output);
+
+        writer.write_all(b"Loaded key: sk-").unwrap();
+        writer
+            .write_all(b"ant-api03-abcdef1234567890_val\n")
+            .unwrap();
+
+        let result = String::from_utf8(output).unwrap();
+        assert!(!result.contains("ant-api03-abcdef1234567890_val"));
+        assert!(result.contains("[REDACTED_API_KEY]"));
+    }
+
+    #[test]
+    fn test_chunk_boundary_bearer_token_splitting() {
+        // Requirement 1.3: Bearer token split across writes
+        let mut output = Vec::new();
+        let mut writer = RedactingWriter::new(&mut output);
+
+        writer.write_all(b"Header: Bearer ").unwrap();
+        writer.write_all(b"eyJhbGciOiJIUzI1NiJ9\n").unwrap();
+
+        let result = String::from_utf8(output).unwrap();
+        assert!(!result.contains("eyJhbGciOiJIUzI1NiJ9"));
+        assert!(result.contains("Bearer [REDACTED_TOKEN]"));
+    }
+
+    #[test]
+    fn test_chunk_boundary_prompt_splitting() {
+        // Requirement 1.4: Prompt value split across writes
+        let mut output = Vec::new();
+        let mut writer = RedactingWriter::new(&mut output);
+
+        writer.write_all(b"Command: prompt=\"Inject ").unwrap();
+        writer.write_all(b"malicious payload\"\n").unwrap();
+
+        let result = String::from_utf8(output).unwrap();
+        assert!(!result.contains("malicious payload"));
+        assert!(result.contains("prompt=[REDACTED_PROMPT]"));
+    }
+
+    #[test]
+    fn test_multiple_lines_in_single_write() {
+        // Requirement 1.5: Multiple lines in a single write
+        let mut output = Vec::new();
+        let mut writer = RedactingWriter::new(&mut output);
+
+        let multi = b"line 1: token=secret111\nline 2: normal line\nline 3: token=secret222\n";
+        writer.write_all(multi).unwrap();
+
+        let result = String::from_utf8(output).unwrap();
+        assert!(!result.contains("secret111"));
+        assert!(!result.contains("secret222"));
+        assert!(result.contains("line 1: token=[REDACTED]"));
+        assert!(result.contains("line 2: normal line"));
+        assert!(result.contains("line 3: token=[REDACTED]"));
+    }
+
+    #[test]
+    fn test_partial_final_line_flushed_on_flush() {
+        // Requirement 1.6: Partial final line followed by flush()
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Clone, Default)]
+        struct SharedBuf(Arc<Mutex<Vec<u8>>>);
+        impl Write for SharedBuf {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let shared = SharedBuf::default();
+        let mut writer = RedactingWriter::new(shared.clone());
+
+        writer
+            .write_all(b"Unfinished line token=unflushed123")
+            .unwrap();
+        assert!(
+            shared.0.lock().unwrap().is_empty(),
+            "Unfinished line should remain buffered before flush"
+        );
+
+        writer.flush().unwrap();
+        let result = String::from_utf8(shared.0.lock().unwrap().clone()).unwrap();
+        assert!(!result.contains("unflushed123"));
+        assert!(result.contains("token=[REDACTED]"));
     }
 }

@@ -36,10 +36,11 @@ fn test_systemd_user_service_unit_file_contract() {
         "Unit file must have [Install] section"
     );
 
-    // 2. D-Bus activation and naming
+    // 2. Readiness notification and D-Bus integration
+    // Type=notify paired with BusName= guarantees systemd waits for BOTH READY=1 and D-Bus name ownership
     assert!(
-        content.contains("Type=dbus"),
-        "Service must declare Type=dbus for D-Bus synchronization"
+        content.contains("Type=notify"),
+        "Service must declare Type=notify for sd_notify readiness synchronization"
     );
     assert!(
         content.contains(&format!("BusName={}", BUS_NAME)),
@@ -65,6 +66,14 @@ fn test_systemd_user_service_unit_file_contract() {
     assert!(
         content.contains("PartOf=graphical-session.target"),
         "Service must be PartOf=graphical-session.target"
+    );
+    assert!(
+        content.contains("After=graphical-session.target"),
+        "Service must be After=graphical-session.target"
+    );
+    assert!(
+        !content.contains("After=graphical-session.target dbus.service"),
+        "Service must not depend on distribution-specific dbus.service"
     );
     assert!(
         content.contains("WantedBy=graphical-session.target"),

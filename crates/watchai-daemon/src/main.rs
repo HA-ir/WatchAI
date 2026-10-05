@@ -363,18 +363,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = notifier.notify_stopping();
     info!("Initiating clean termination of background workers...");
 
-    // Spawn auxiliary listener allowing immediate force exit if user signals a second time during drain
-    let force_exit_handle = tokio::spawn(async {
-        let _ = tokio::signal::ctrl_c().await;
-        warn!("Received second shutdown signal during drain. Forcing immediate termination.");
-        std::process::exit(130);
+    // Repeated signals during drain are caught harmlessly without bypassing cleanup (T060)
+    let repeated_signal_handle = tokio::spawn(async {
+        wait_for_shutdown_signal().await;
+        info!("Received repeated shutdown signal during drain; graceful shutdown already in progress.");
     });
 
     let _ = shutdown_tx.send(true);
-    let _ = loop_handle.await;
-    drop(event_tx); // Drop daemon event sender to allow consumer to finish
-    let _ = ingest_handle.await;
-    force_exit_handle.abort();
+
+    // Bounded shutdown drain: ensure workers terminate cleanly within 5.0s deadline without hanging (T060)
+    let drain_future = async {
+        let _ = loop_handle.await;
+        drop(event_tx); // Drop daemon event sender to allow consumer to finish
+        let _ = ingest_handle.await;
+    };
+
+    if tokio::time::timeout(Duration::from_secs(5), drain_future)
+        .await
+        .is_err()
+    {
+        warn!("Worker shutdown drain exceeded 5.0s timeout. Proceeding to D-Bus release.");
+    }
+    repeated_signal_handle.abort();
 
     // Release D-Bus bus name cleanly so broker broadcasts NameOwnerChanged(old, "") to clients (T060)
     info!("Releasing D-Bus bus name '{}'...", BUS_NAME);
