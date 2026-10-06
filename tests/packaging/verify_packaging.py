@@ -36,8 +36,20 @@ def check_static_packaging_assets(repo_root: str) -> bool:
             errors.append("meson.build must NOT contain watchai-mock target")
         if "compile-extension-schemas" not in content:
             errors.append("meson.build missing local schema compilation target")
+        if "subdir('data')" not in content:
+            errors.append("meson.build missing data subdirectory inclusion for system schema tracking")
 
-    # 2. cargo-build.py
+    # 2. data/meson.build
+    data_meson = os.path.join(repo_root, "data", "meson.build")
+    if not os.path.isfile(data_meson):
+        errors.append("data/meson.build is missing")
+    else:
+        with open(data_meson, "r", encoding="utf-8") as f:
+            data_content = f.read()
+        if "compile-system-schemas" not in data_content:
+            errors.append("data/meson.build missing compile-system-schemas target")
+
+    # 3. cargo-build.py
     cargo_build = os.path.join(repo_root, "build-aux", "cargo-build.py")
     if not os.path.isfile(cargo_build):
         errors.append("build-aux/cargo-build.py is missing")
@@ -49,7 +61,7 @@ def check_static_packaging_assets(repo_root: str) -> bool:
         if "--target-dir" not in cargo_content:
             errors.append("cargo-build.py does not enforce isolated --target-dir")
 
-    # 3. systemd unit template
+    # 4. systemd unit template
     service_in = os.path.join(repo_root, "systemd", "watchai.service.in")
     if not os.path.isfile(service_in):
         errors.append("systemd/watchai.service.in is missing")
@@ -59,7 +71,7 @@ def check_static_packaging_assets(repo_root: str) -> bool:
         if "@bindir@/watchai-daemon" not in service_content:
             errors.append("systemd/watchai.service.in missing @bindir@ placeholder")
 
-    # 4. metadata.json URL
+    # 5. metadata.json URL
     metadata_json = os.path.join(repo_root, "extension", "metadata.json")
     if not os.path.isfile(metadata_json):
         errors.append("extension/metadata.json is missing")
@@ -72,7 +84,7 @@ def check_static_packaging_assets(repo_root: str) -> bool:
         except Exception as e:
             errors.append(f"Failed to parse metadata.json: {e}")
 
-    # 5. Schema XML validation
+    # 6. Schema XML validation
     schema_dir = os.path.join(repo_root, "extension", "schemas")
     schema_xml = os.path.join(
         schema_dir, "org.gnome.shell.extensions.watchai.gschema.xml"
@@ -169,7 +181,7 @@ def run_full_packaging_verification(repo_root: str) -> bool:
             sys.stderr.write(f"Error: Installed daemon binary missing at {daemon_bin}\n")
             return False
         if not os.access(daemon_bin, os.X_OK):
-            sys.stderr.write(f"Error: Installed daemon binary is not executable\n")
+            sys.stderr.write("Error: Installed daemon binary is not executable\n")
             return False
 
         daemon_mode = stat.S_IMODE(os.stat(daemon_bin).st_mode)
@@ -249,21 +261,53 @@ def run_full_packaging_verification(repo_root: str) -> bool:
                 sys.stderr.write(f"Error: Local schema file {fpath} has unsafe mode: {oct(fmode)}\n")
                 return False
 
-        # System schemas
+        # System schemas: both XML and compiled database must exist
+        sys_schema_dir = os.path.join(prefix_dir, "share", "glib-2.0", "schemas")
         sys_xml = os.path.join(
-            prefix_dir,
-            "share",
-            "glib-2.0",
-            "schemas",
+            sys_schema_dir,
             "org.gnome.shell.extensions.watchai.gschema.xml",
         )
+        sys_compiled = os.path.join(sys_schema_dir, "gschemas.compiled")
         if not os.path.isfile(sys_xml):
             sys.stderr.write(f"Error: System schema XML missing: {sys_xml}\n")
             return False
-        sys_mode = stat.S_IMODE(os.stat(sys_xml).st_mode)
-        if sys_mode & 0o022 != 0 or sys_mode & 0o111 != 0:
-            sys.stderr.write(f"Error: System schema {sys_xml} has unsafe mode: {oct(sys_mode)}\n")
+        if not os.path.isfile(sys_compiled):
+            sys.stderr.write(f"Error: System compiled schema missing: {sys_compiled}\n")
             return False
+
+        for fpath in [sys_xml, sys_compiled]:
+            fmode = stat.S_IMODE(os.stat(fpath).st_mode)
+            if fmode & 0o022 != 0 or fmode & 0o111 != 0:
+                sys.stderr.write(f"Error: System schema file {fpath} has unsafe mode: {oct(fmode)}\n")
+                return False
+
+        # Verify compiled schema validity using gsettings --schemadir
+        gsettings_bin = shutil.which("gsettings")
+        if gsettings_bin:
+            # 1. Test extension-local compiled schema
+            ext_schema_dir = os.path.join(ext_dir, "schemas")
+            res_ext = subprocess.run(
+                [gsettings_bin, "--schemadir", ext_schema_dir, "list-keys", "org.gnome.shell.extensions.watchai"],
+                capture_output=True,
+                text=True,
+            )
+            if res_ext.returncode != 0 or "dwell-duration-seconds" not in res_ext.stdout:
+                sys.stderr.write(
+                    f"Error: Extension compiled schema is invalid or missing WatchAI keys:\n{res_ext.stderr}\n"
+                )
+                return False
+
+            # 2. Test system-level compiled schema
+            res_sys = subprocess.run(
+                [gsettings_bin, "--schemadir", sys_schema_dir, "list-keys", "org.gnome.shell.extensions.watchai"],
+                capture_output=True,
+                text=True,
+            )
+            if res_sys.returncode != 0 or "dwell-duration-seconds" not in res_sys.stdout:
+                sys.stderr.write(
+                    f"Error: System compiled schema is invalid or missing WatchAI keys:\n{res_sys.stderr}\n"
+                )
+                return False
 
         # Systemd service unit
         service_file = os.path.join(
@@ -300,15 +344,27 @@ def run_full_packaging_verification(repo_root: str) -> bool:
 
         # Verify that all WatchAI artifacts are gone
         remaining_watchai_files = []
+        remaining_compiled_schemas = []
         for root, _, files in os.walk(prefix_dir):
             for fname in files:
+                fpath = os.path.join(root, fname)
                 if "watchai" in fname.lower():
-                    remaining_watchai_files.append(os.path.join(root, fname))
+                    remaining_watchai_files.append(fpath)
+                elif fname == "gschemas.compiled":
+                    remaining_compiled_schemas.append(fpath)
 
         if remaining_watchai_files:
             sys.stderr.write(
-                f"Error: Uninstallation incomplete! Residual files remain:\n"
+                f"Error: Uninstallation incomplete! Residual WatchAI files remain:\n"
                 + "\n".join(remaining_watchai_files)
+                + "\n"
+            )
+            return False
+
+        if remaining_compiled_schemas:
+            sys.stderr.write(
+                f"Error: Uninstallation incomplete! Residual gschemas.compiled files remain:\n"
+                + "\n".join(remaining_compiled_schemas)
                 + "\n"
             )
             return False
@@ -325,6 +381,9 @@ def run_full_packaging_verification(repo_root: str) -> bool:
         if os.path.exists(sys_xml):
             sys.stderr.write(f"Error: System schema XML was not removed: {sys_xml}\n")
             return False
+        if os.path.exists(sys_compiled):
+            sys.stderr.write(f"Error: System compiled schema was not removed: {sys_compiled}\n")
+            return False
 
         # 6. Reinstallation idempotency
         print(f"Step 6: {ninja_bin} -C {build_dir} install (reinstallation idempotency)")
@@ -337,11 +396,27 @@ def run_full_packaging_verification(repo_root: str) -> bool:
             sys.stderr.write(f"Error: Reinstall failed to materialize daemon binary: {daemon_bin}\n")
             return False
         if not os.path.isfile(local_compiled):
-            sys.stderr.write(f"Error: Reinstall failed to materialize compiled schema: {local_compiled}\n")
+            sys.stderr.write(f"Error: Reinstall failed to materialize local compiled schema: {local_compiled}\n")
+            return False
+        if not os.path.isfile(sys_compiled):
+            sys.stderr.write(f"Error: Reinstall failed to materialize system compiled schema: {sys_compiled}\n")
             return False
         if not os.path.isfile(service_file):
             sys.stderr.write(f"Error: Reinstall failed to materialize service unit: {service_file}\n")
             return False
+
+        # Re-verify schema accessibility after reinstall
+        if gsettings_bin:
+            res_reinstall = subprocess.run(
+                [gsettings_bin, "--schemadir", sys_schema_dir, "list-keys", "org.gnome.shell.extensions.watchai"],
+                capture_output=True,
+                text=True,
+            )
+            if res_reinstall.returncode != 0 or "dwell-duration-seconds" not in res_reinstall.stdout:
+                sys.stderr.write(
+                    f"Error: Reinstalled system schema is invalid or inaccessible:\n{res_reinstall.stderr}\n"
+                )
+                return False
 
         print("\nAll dynamic packaging checks PASSED successfully!")
         return True

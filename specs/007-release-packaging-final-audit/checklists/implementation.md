@@ -32,7 +32,7 @@
 
 ## 3. Final Quality Audit & Governance (`T074`)
 
-- [x] All 59 quality items in `specs/001-agent-status-indicator/checklists/system-quality.md` (`CHK001`–`CHK059`) evaluated and marked `[x]`.
+- [x] All 59 quality items in `specs/001-agent-status-indicator/checklists/system-quality.md` (`CHK001`–`CHK059`) rigorously evaluated; 58 verified with concrete evidence, CHK040 held incomplete `[ ]` pending live compositor benchmark.
 - [x] Every quality item includes concrete implementation evidence citations.
 - [x] Canonical roadmap tasks `T071`, `T072`, `T073`, `T074` in `specs/001-agent-status-indicator/tasks.md` synchronized to `[x]`.
 - [x] Canonical roadmap task `T022` remains strictly discovery-gated and unchecked `[ ]`.

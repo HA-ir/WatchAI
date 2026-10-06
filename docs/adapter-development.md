@@ -363,6 +363,9 @@ Any adapter that attempts to capture or transmit prohibited data violates the pr
 
 Below is an example of creating a new adapter for an AI coding assistant named `aider`.
 
+> **Normative Contracts vs. Illustrative Structure**:
+> The `ProviderAdapter` trait definition, methods, lifecycle state machine, and data models documented in this guide are **normative architectural contracts**. Conversely, internal adapter state management—such as wrapping `Option<EventSink>` in an `RwLock` in the tutorial below—is **illustrative structure**. Adapter authors may structure internal synchronization and worker loops as best fits their provider's runtime.
+
 ### Step 1: Create `crates/watchai-adapters/src/aider.rs`
 
 ```rust

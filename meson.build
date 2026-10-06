@@ -103,6 +103,9 @@ install_data(
   install_mode: 'rw-r--r--',
 )
 
+# System-level schema compilation and tracking
+subdir('data')
+
 gnome.post_install(
   glib_compile_schemas: true,
 )
