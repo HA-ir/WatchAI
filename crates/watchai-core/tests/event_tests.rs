@@ -1,5 +1,8 @@
 use chrono::{Duration, Utc};
-use watchai_core::session::{AdapterStatus, AgentSession, SessionLifecycleEvent, ToolCategory};
+use watchai_core::session::{
+    process_lifecycle_event, AdapterStatus, AgentSession, EventProcessingOutcome,
+    SessionLifecycleEvent, SessionRegistry, ToolCategory,
+};
 use watchai_core::state::LifecycleState;
 
 fn create_test_session() -> AgentSession {
@@ -296,4 +299,71 @@ fn test_session_terminated_event_exit_code_mapping() {
     })
     .unwrap();
     assert_eq!(s3.current_state, LifecycleState::Cancelled);
+}
+
+#[tokio::test]
+async fn test_session_registered_event_creates_session_in_registry() {
+    // T149: SessionRegistered event adds new session to registry with AdapterStatus::Active
+    let registry = SessionRegistry::new();
+    let now = Utc::now();
+
+    let reg_event = SessionLifecycleEvent::SessionRegistered {
+        session_id: "test-mock-session-1".to_string(),
+        provider_id: "claude-code".to_string(),
+        provider_display_name: "Claude Code".to_string(),
+        project_path: "/home/user/project-alpha".to_string(),
+        process_id: Some(12345),
+        initial_state: LifecycleState::Starting,
+        timestamp: now,
+    };
+
+    let outcome = process_lifecycle_event(&registry, &reg_event).await;
+    assert_eq!(
+        outcome,
+        EventProcessingOutcome::Created {
+            session_id: "test-mock-session-1".to_string(),
+            initial_state: LifecycleState::Starting,
+        }
+    );
+
+    let session = registry
+        .get("test-mock-session-1")
+        .await
+        .expect("Session must exist");
+    assert_eq!(session.session_id, "test-mock-session-1");
+    assert_eq!(session.provider_id, "claude-code");
+    assert_eq!(session.provider_display_name, "Claude Code");
+    assert_eq!(session.project_name, "project-alpha");
+    assert_eq!(session.current_state, LifecycleState::Starting);
+    assert_eq!(session.process_id, Some(12345));
+    assert_eq!(
+        session.adapter_status,
+        watchai_core::session::AdapterStatus::Active
+    );
+    assert_eq!(session.started_at, now);
+    assert_eq!(session.state_entered_at, now);
+    assert_eq!(session.last_seen_at, now);
+
+    // Duplicate registration must be rejected with DroppedInvalidTransition
+    let dup_outcome = process_lifecycle_event(&registry, &reg_event).await;
+    assert!(
+        matches!(dup_outcome, EventProcessingOutcome::DroppedInvalidTransition { session_id, .. } if session_id == "test-mock-session-1"),
+        "Duplicate registration must be rejected"
+    );
+
+    // Subsequent valid transition must succeed
+    let transition_event = SessionLifecycleEvent::StateTransition {
+        session_id: "test-mock-session-1".to_string(),
+        new_state: LifecycleState::Working,
+        tool_category: None,
+        timestamp: now + Duration::milliseconds(10),
+    };
+    let trans_outcome = process_lifecycle_event(&registry, &transition_event).await;
+    assert_eq!(
+        trans_outcome,
+        EventProcessingOutcome::Applied {
+            session_id: "test-mock-session-1".to_string(),
+            new_state: LifecycleState::Working,
+        }
+    );
 }

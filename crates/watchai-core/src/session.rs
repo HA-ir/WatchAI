@@ -255,6 +255,9 @@ impl AgentSession {
                 let next_seq = self.sequence_number + 1;
                 self.transition_to_at(target, next_seq, None, *timestamp)
             }
+            SessionLifecycleEvent::SessionRegistered { .. } => {
+                Err("Cannot apply SessionRegistered to an existing session".to_string())
+            }
         }
     }
 }
@@ -280,6 +283,16 @@ pub enum SessionLifecycleEvent {
         exit_code: Option<i32>,
         timestamp: DateTime<Utc>,
     },
+    /// Direct registration of a new session (e.g. from mock verification harness).
+    SessionRegistered {
+        session_id: String,
+        provider_id: String,
+        provider_display_name: String,
+        project_path: String,
+        process_id: Option<u32>,
+        initial_state: LifecycleState,
+        timestamp: DateTime<Utc>,
+    },
 }
 
 impl SessionLifecycleEvent {
@@ -287,7 +300,9 @@ impl SessionLifecycleEvent {
     pub fn is_critical(&self) -> bool {
         matches!(
             self,
-            Self::StateTransition { .. } | Self::SessionTerminated { .. }
+            Self::StateTransition { .. }
+                | Self::SessionTerminated { .. }
+                | Self::SessionRegistered { .. }
         )
     }
 
@@ -297,6 +312,7 @@ impl SessionLifecycleEvent {
             Self::StateTransition { session_id, .. } => session_id,
             Self::Heartbeat { session_id, .. } => session_id,
             Self::SessionTerminated { session_id, .. } => session_id,
+            Self::SessionRegistered { session_id, .. } => session_id,
         }
     }
 
@@ -306,6 +322,7 @@ impl SessionLifecycleEvent {
             Self::StateTransition { timestamp, .. } => *timestamp,
             Self::Heartbeat { timestamp, .. } => *timestamp,
             Self::SessionTerminated { timestamp, .. } => *timestamp,
+            Self::SessionRegistered { timestamp, .. } => *timestamp,
         }
     }
 }
@@ -371,6 +388,11 @@ impl SessionRegistry {
 /// Result of processing a SessionLifecycleEvent against the session registry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EventProcessingOutcome {
+    /// Newly registered session was accepted and created in the registry.
+    Created {
+        session_id: String,
+        initial_state: LifecycleState,
+    },
     /// Valid state transition was accepted and applied to the session.
     Applied {
         session_id: String,
@@ -386,6 +408,7 @@ pub enum EventProcessingOutcome {
 
 /// Process a SessionLifecycleEvent against the SessionRegistry with explicit rejection semantics.
 /// - Valid events update the session in the registry and return `Applied` or `HeartbeatApplied`.
+/// - New registration events create the session in the registry and return `Created`.
 /// - Unknown-session events return `DroppedUnknownSession` without mutating registry or aggregate state.
 /// - Illegal transitions or stale timestamps return `DroppedInvalidTransition`.
 pub async fn process_lifecycle_event(
@@ -393,6 +416,44 @@ pub async fn process_lifecycle_event(
     event: &SessionLifecycleEvent,
 ) -> EventProcessingOutcome {
     let session_id = event.session_id();
+
+    if let SessionLifecycleEvent::SessionRegistered {
+        session_id,
+        provider_id,
+        provider_display_name,
+        project_path,
+        process_id,
+        initial_state,
+        timestamp,
+    } = event
+    {
+        if registry.get(session_id).await.is_some() {
+            return EventProcessingOutcome::DroppedInvalidTransition {
+                session_id: session_id.clone(),
+                error: format!("Session '{session_id}' is already registered"),
+            };
+        }
+
+        let mut session = AgentSession::new(
+            session_id.clone(),
+            provider_id.clone(),
+            provider_display_name.clone(),
+            project_path,
+            *process_id,
+            *initial_state,
+            AdapterStatus::Active,
+        );
+        session.started_at = *timestamp;
+        session.state_entered_at = *timestamp;
+        session.last_seen_at = *timestamp;
+
+        registry.upsert(session).await;
+        return EventProcessingOutcome::Created {
+            session_id: session_id.clone(),
+            initial_state: *initial_state,
+        };
+    }
+
     let mut session = match registry.get(session_id).await {
         Some(s) => s,
         None => {

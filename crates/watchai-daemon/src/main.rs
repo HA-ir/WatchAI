@@ -173,6 +173,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let event_sink = EventSink::new(event_tx.clone(), Some(shutdown_tx.subscribe()));
     adapter_registry.attach_event_sink(event_sink);
 
+    // Conditionally spawn isolated Unix-domain test event socket when WATCHAI_TEST_SOCKET is present (T151)
+    let test_socket_handle = if let Ok(sock_path) = std::env::var("WATCHAI_TEST_SOCKET") {
+        info!("Spawning test event socket listener at '{}'", sock_path);
+        let path = std::path::PathBuf::from(sock_path);
+        let tx = event_tx.clone();
+        let s_rx = shutdown_tx.subscribe();
+        Some(tokio::spawn(async move {
+            if let Err(e) =
+                watchai_daemon::test_socket::run_test_socket_listener(path, tx, s_rx).await
+            {
+                error!("Test socket listener encountered fatal error: {}", e);
+            }
+        }))
+    } else {
+        None
+    };
+
     let ingest_registry = registry.clone();
     let ingest_agg = aggregate_lock.clone();
     let ingest_iface = iface_ref.clone();
@@ -187,6 +204,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         Some(event) => {
                             let outcome = process_lifecycle_event(&ingest_registry, &event).await;
                             match outcome {
+                                EventProcessingOutcome::Created { session_id, .. } => {
+                                    if let Some(session) = ingest_registry.get(&session_id).await {
+                                        let dto = SessionDto::from(&session);
+                                        if let Err(e) = WatchAiDbusService::emit_session_added(
+                                            ingest_iface.signal_context(),
+                                            &dto,
+                                        ).await {
+                                            warn!("Failed to emit SessionAdded signal: {}", e);
+                                        }
+
+                                        let now = Utc::now();
+                                        if let Some(agg_dto) = sync_aggregate_state(&ingest_registry, &ingest_agg, now).await {
+                                            if let Err(e) = WatchAiDbusService::emit_aggregate_state_changed(
+                                                ingest_iface.signal_context(),
+                                                &agg_dto.state,
+                                                agg_dto.active_session_count,
+                                                agg_dto.waiting_session_count,
+                                                agg_dto.error_session_count,
+                                                &agg_dto.updated_at,
+                                            ).await {
+                                                warn!("Failed to emit AggregateStateChanged signal: {}", e);
+                                            }
+                                        }
+                                    }
+                                }
                                 EventProcessingOutcome::Applied { session_id, .. } => {
                                     if let Some(session) = ingest_registry.get(&session_id).await {
                                         let dto = SessionDto::from(&session);
@@ -371,9 +413,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let _ = shutdown_tx.send(true);
 
-    // Bounded shutdown drain: ensure workers terminate cleanly within 5.0s deadline without hanging (T060)
+    // Bounded shutdown drain: ensure workers terminate cleanly within 5.0s deadline without hanging (T060, T151)
     let drain_future = async {
         let _ = loop_handle.await;
+        if let Some(h) = test_socket_handle {
+            let _ = h.await;
+        }
         drop(event_tx); // Drop daemon event sender to allow consumer to finish
         let _ = ingest_handle.await;
     };

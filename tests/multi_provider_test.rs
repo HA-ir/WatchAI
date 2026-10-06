@@ -222,6 +222,7 @@ async fn test_prioritized_event_ingestion_and_heartbeat_saturation() {
                 assert_eq!(exit_code, Some(0));
                 termination_found = true;
             }
+            SessionLifecycleEvent::SessionRegistered { .. } => {}
         }
     }
 

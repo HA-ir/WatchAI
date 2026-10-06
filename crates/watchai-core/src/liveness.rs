@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use std::fs;
 use std::io::Error;
-use std::path::Path;
+use std::path::PathBuf;
 use tracing::{debug, warn};
 
 use crate::session::{AgentSession, SessionRegistry};
@@ -26,13 +26,30 @@ pub trait ProcStatReader: Send + Sync {
     fn read_stat(&self, pid: u32) -> Result<String, Error>;
 }
 
+/// Resolves the effective procfs root path.
+/// Defaults to `/proc`. If `WATCHAI_PROC_ROOT` is set, non-empty, and non-whitespace,
+/// its trimmed path is used (enabling isolated test/E2E harnesses without host contamination).
+pub fn resolve_proc_root() -> PathBuf {
+    match std::env::var("WATCHAI_PROC_ROOT") {
+        Ok(val) => {
+            let trimmed = val.trim();
+            if trimmed.is_empty() {
+                PathBuf::from("/proc")
+            } else {
+                PathBuf::from(trimmed)
+            }
+        }
+        Err(_) => PathBuf::from("/proc"),
+    }
+}
+
 /// Production implementation reading real Linux `/proc/[pid]/stat`.
 pub struct RealProcStatReader;
 
 impl ProcStatReader for RealProcStatReader {
     fn read_stat(&self, pid: u32) -> Result<String, Error> {
-        let path = format!("/proc/{}/stat", pid);
-        fs::read_to_string(Path::new(&path))
+        let path = resolve_proc_root().join(pid.to_string()).join("stat");
+        fs::read_to_string(&path)
     }
 }
 

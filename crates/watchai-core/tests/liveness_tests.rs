@@ -191,3 +191,34 @@ fn test_two_consecutive_failures_confirms_dead() {
     // Transitioned to ERROR
     assert_eq!(session.current_state, LifecycleState::Error);
 }
+
+#[test]
+fn test_resolve_proc_root_safe_fallbacks() {
+    use std::path::PathBuf;
+    use watchai_core::liveness::resolve_proc_root;
+
+    // 1. Unset fallback defaults to /proc
+    std::env::remove_var("WATCHAI_PROC_ROOT");
+    assert_eq!(resolve_proc_root(), PathBuf::from("/proc"));
+
+    // 2. Empty string fallback defaults to /proc
+    std::env::set_var("WATCHAI_PROC_ROOT", "");
+    assert_eq!(resolve_proc_root(), PathBuf::from("/proc"));
+
+    // 3. Whitespace-only string fallback defaults to /proc
+    std::env::set_var("WATCHAI_PROC_ROOT", "   \t\n  ");
+    assert_eq!(resolve_proc_root(), PathBuf::from("/proc"));
+
+    // 4. Normal custom proc root
+    std::env::set_var("WATCHAI_PROC_ROOT", "/tmp/custom-proc");
+    assert_eq!(resolve_proc_root(), PathBuf::from("/tmp/custom-proc"));
+
+    // 5. Trailing slash handling with PathBuf joining
+    std::env::set_var("WATCHAI_PROC_ROOT", "/tmp/custom-proc/");
+    let resolved = resolve_proc_root();
+    let stat_path = resolved.join("1234").join("stat");
+    assert_eq!(stat_path, PathBuf::from("/tmp/custom-proc/1234/stat"));
+
+    // Clean up environment
+    std::env::remove_var("WATCHAI_PROC_ROOT");
+}

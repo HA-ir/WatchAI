@@ -70,3 +70,27 @@ fn test_scan_proc_dir_isolates_faults_and_discovers_siblings() {
     // Cleanup
     let _ = fs::remove_dir_all(&mock_proc);
 }
+
+#[test]
+fn test_scan_processes_multi_respects_proc_root_env_and_fallbacks() {
+    let mock_proc =
+        std::env::temp_dir().join(format!("watchai-mock-multi-proc-{}", std::process::id()));
+    let _ = fs::create_dir_all(&mock_proc);
+
+    let pid200 = mock_proc.join("200");
+    let _ = fs::create_dir_all(&pid200);
+    fs::write(pid200.join("cmdline"), b"claude\0").unwrap();
+    let stat200 = "200 (claude) S 1 1 1 0 0 4194304 100 0 0 0 10 20 0 0 20 0 4 0 66666 12345678";
+    fs::write(pid200.join("stat"), stat200).unwrap();
+
+    // With WATCHAI_PROC_ROOT pointing to mock_proc, scan_processes_multi discovers PID 200
+    std::env::set_var("WATCHAI_PROC_ROOT", mock_proc.to_str().unwrap());
+    let discovered =
+        ProcessScanner::scan_processes_multi(&["claude"], "claude-code", "Claude Code");
+    assert_eq!(discovered.len(), 1);
+    assert_eq!(discovered[0].process_id, Some(200));
+
+    // Cleanup and reset
+    std::env::remove_var("WATCHAI_PROC_ROOT");
+    let _ = fs::remove_dir_all(&mock_proc);
+}

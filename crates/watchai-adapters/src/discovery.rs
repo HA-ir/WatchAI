@@ -85,8 +85,9 @@ impl ProcessScanner {
         provider_id: &'static str,
         provider_display_name: &'static str,
     ) -> Vec<DiscoveredSession> {
+        let proc_root = watchai_core::liveness::resolve_proc_root();
         Self::scan_proc_dir_multi(
-            Path::new("/proc"),
+            &proc_root,
             target_binaries,
             provider_id,
             provider_display_name,

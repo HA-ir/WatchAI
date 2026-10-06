@@ -9,9 +9,13 @@ watchai-core = { path = "../crates/watchai-core" }
 watchai-adapters = { path = "../crates/watchai-adapters" }
 watchai-ipc = { path = "../crates/watchai-ipc" }
 watchai-daemon = { path = "../crates/watchai-daemon" }
+watchai-mock = { path = "../crates/watchai-mock" }
 tokio = { workspace = true, features = ["full", "test-util"] }
 chrono.workspace = true
 zbus.workspace = true
+serde_json.workspace = true
+nix.workspace = true
+futures-util.workspace = true
 
 [[test]]
 name = "us1_single_session_flow_test"
@@ -32,3 +36,19 @@ path = "multi_provider_test.rs"
 [[test]]
 name = "systemd_lifecycle_test"
 path = "systemd_lifecycle_test.rs"
+
+[[test]]
+name = "scenario1_startup_test"
+path = "e2e/scenario1_startup_test.rs"
+
+[[test]]
+name = "scenario2_lifecycle_test"
+path = "e2e/scenario2_lifecycle_test.rs"
+
+[[test]]
+name = "scenario3_aggregation_test"
+path = "e2e/scenario3_aggregation_test.rs"
+
+[[test]]
+name = "scenario4_crash_test"
+path = "e2e/scenario4_crash_test.rs"
