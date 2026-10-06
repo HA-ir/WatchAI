@@ -199,10 +199,10 @@ description: "Actionable implementation task breakdown for WatchAI Baseline Agen
 
 **Purpose**: Finalize developer documentation, distribution build scripts with install/uninstall targets, and complete the requirements quality checklist review.
 
-- [ ] T071 Create Meson build configuration with install and clean uninstall targets (`ninja uninstall`) for compiling GSettings, installing systemd unit, and bundling GNOME extension in `meson.build`.
-- [ ] T072 [P] Write comprehensive user installation, configuration, and uninstallation guide in `README.md`.
-- [ ] T073 [P] Finalize provider adapter integration guide for third-party developers in `docs/adapter-development.md`.
-- [ ] T074 Perform final audit of `specs/001-agent-status-indicator/checklists/system-quality.md` confirming all 59 quality items are evaluated and marked.
+- [x] T071 Create Meson build configuration with install and clean uninstall targets (`ninja uninstall`) for compiling GSettings, installing systemd unit, and bundling GNOME extension in `meson.build`.
+- [x] T072 [P] Write comprehensive user installation, configuration, and uninstallation guide in `README.md`.
+- [x] T073 [P] Finalize provider adapter integration guide for third-party developers in `docs/adapter-development.md`.
+- [x] T074 Perform final audit of `specs/001-agent-status-indicator/checklists/system-quality.md` confirming all 59 quality items are evaluated and marked.
 
 ---
 
