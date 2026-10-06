@@ -6,6 +6,7 @@ schema installation, systemd unit generation, secure file permissions, and clean
 uninstallation/reinstallation in an isolated temporary prefix.
 """
 
+import argparse
 import json
 import os
 import shutil
@@ -16,7 +17,7 @@ import tempfile
 
 
 def check_static_packaging_assets(repo_root: str) -> bool:
-    """Validate packaging definition files without requiring meson/ninja."""
+    """Validate packaging definition files statically."""
     print("Running static packaging validation...")
     errors = []
 
@@ -97,18 +98,28 @@ def check_static_packaging_assets(repo_root: str) -> bool:
 
 
 def run_full_packaging_verification(repo_root: str) -> bool:
-    """Run full meson setup, build, install, permission check, uninstall, and reinstall."""
+    """Run full meson setup, build, install, permission check, uninstall, and reinstall.
+
+    Fails if meson or ninja is not found in PATH.
+    """
     ninja_bin = shutil.which("ninja") or shutil.which("ninja-build")
     meson_bin = shutil.which("meson")
 
     if not meson_bin or not ninja_bin:
-        print("\nNote: 'meson' or 'ninja' not found in PATH.")
-        print("To run full packaging verification, install them via:")
-        print("  sudo apt install meson ninja-build")
-        print("Falling back to static packaging asset verification.")
-        return check_static_packaging_assets(repo_root)
+        missing = []
+        if not meson_bin:
+            missing.append("meson")
+        if not ninja_bin:
+            missing.append("ninja (or ninja-build)")
+        sys.stderr.write(
+            f"Error: Required build tools missing from PATH: {', '.join(missing)}\n"
+            "Full packaging verification is mandatory and cannot execute without them.\n"
+            "Install prerequisites via:\n"
+            "  sudo apt install meson ninja-build\n"
+        )
+        return False
 
-    # Static checks first
+    # Perform static checks first
     if not check_static_packaging_assets(repo_root):
         return False
 
@@ -128,50 +139,60 @@ def run_full_packaging_verification(repo_root: str) -> bool:
         ]
         res = subprocess.run(setup_cmd, capture_output=True, text=True)
         if res.returncode != 0:
-            print(f"meson setup failed:\nSTDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}", file=sys.stderr)
+            sys.stderr.write(f"meson setup failed:\nSTDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}\n")
             return False
 
         # 2. Build via Ninja
         print(f"Step 2: {ninja_bin} -C {build_dir}")
         res = subprocess.run([ninja_bin, "-C", build_dir], capture_output=True, text=True)
         if res.returncode != 0:
-            print(f"ninja build failed:\nSTDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}", file=sys.stderr)
+            sys.stderr.write(f"ninja build failed:\nSTDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}\n")
             return False
 
         # Verify Cargo target directory isolation: <build_dir>/cargo-target must exist
         cargo_target = os.path.join(build_dir, "cargo-target")
         if not os.path.isdir(cargo_target):
-            print(f"Error: Isolated cargo-target was not found at {cargo_target}", file=sys.stderr)
+            sys.stderr.write(f"Error: Isolated cargo-target was not found at {cargo_target}\n")
             return False
 
         # 3. Install via Ninja
         print(f"Step 3: {ninja_bin} -C {build_dir} install")
         res = subprocess.run([ninja_bin, "-C", build_dir, "install"], capture_output=True, text=True)
         if res.returncode != 0:
-            print(f"ninja install failed:\nSTDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}", file=sys.stderr)
+            sys.stderr.write(f"ninja install failed:\nSTDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}\n")
             return False
 
-        # 4. Assert installed artifacts & permissions
-        print("Step 4: Inspecting installed artifacts and security permissions...")
+        # 4. Strict artifact inspection and permission verification
+        print("Step 4: Strict inspection of installed artifacts and filesystem permissions...")
         daemon_bin = os.path.join(prefix_dir, "bin", "watchai-daemon")
         if not os.path.isfile(daemon_bin):
-            print(f"Error: Installed daemon binary missing at {daemon_bin}", file=sys.stderr)
+            sys.stderr.write(f"Error: Installed daemon binary missing at {daemon_bin}\n")
             return False
         if not os.access(daemon_bin, os.X_OK):
-            print(f"Error: Installed daemon binary is not executable", file=sys.stderr)
+            sys.stderr.write(f"Error: Installed daemon binary is not executable\n")
             return False
 
         daemon_mode = stat.S_IMODE(os.stat(daemon_bin).st_mode)
         if daemon_mode != 0o755:
-            print(f"Warning: Installed daemon mode is {oct(daemon_mode)}, expected 0o755")
-
-        # Assert watchai-mock is strictly absent
-        mock_bin = os.path.join(prefix_dir, "bin", "watchai-mock")
-        if os.path.exists(mock_bin):
-            print(f"Error: watchai-mock found in install prefix! Must be excluded.", file=sys.stderr)
+            sys.stderr.write(
+                f"Error: Installed daemon mode is {oct(daemon_mode)}, strictly required to be 0o755\n"
+            )
             return False
 
-        # Extension files
+        # Assert watchai-mock and test infrastructure are strictly absent
+        mock_bin = os.path.join(prefix_dir, "bin", "watchai-mock")
+        if os.path.exists(mock_bin):
+            sys.stderr.write("Error: watchai-mock found in install prefix! Must be strictly excluded.\n")
+            return False
+
+        # Check for any test sockets or harness artifacts
+        for root, _, files in os.walk(prefix_dir):
+            for fname in files:
+                if "mock" in fname.lower() or "test" in fname.lower() and not fname.endswith(".service"):
+                    sys.stderr.write(f"Error: Test artifact found in install prefix: {os.path.join(root, fname)}\n")
+                    return False
+
+        # Extension files verification
         ext_dir = os.path.join(
             prefix_dir,
             "share",
@@ -179,21 +200,54 @@ def run_full_packaging_verification(repo_root: str) -> bool:
             "extensions",
             "watchai@gnome.org",
         )
-        for fname in ["extension.js", "indicator.js", "popover.js", "metadata.json", "stylesheet.css"]:
+        expected_ext_files = [
+            "dbus_client.js",
+            "extension.js",
+            "indicator.js",
+            "metadata.json",
+            "notifications.js",
+            "popover.js",
+            "settings.js",
+            "stylesheet.css",
+            "utils.js",
+        ]
+        for fname in expected_ext_files:
             fpath = os.path.join(ext_dir, fname)
             if not os.path.isfile(fpath):
-                print(f"Error: Extension file missing: {fpath}", file=sys.stderr)
+                sys.stderr.write(f"Error: Required extension file missing: {fpath}\n")
                 return False
             fmode = stat.S_IMODE(os.stat(fpath).st_mode)
             if fmode & 0o022 != 0:
-                print(f"Error: Asset {fpath} is group/world writable: {oct(fmode)}", file=sys.stderr)
+                sys.stderr.write(f"Error: Asset {fpath} is group/world writable: {oct(fmode)}\n")
+                return False
+            if fmode & 0o111 != 0:
+                sys.stderr.write(f"Error: Asset {fpath} has unexpected executable bits set: {oct(fmode)}\n")
                 return False
 
-        # Extension local schemas
-        local_compiled = os.path.join(ext_dir, "schemas", "gschemas.compiled")
-        if not os.path.isfile(local_compiled):
-            print(f"Error: Extension local gschemas.compiled missing: {local_compiled}", file=sys.stderr)
+        # Metadata URL check
+        with open(os.path.join(ext_dir, "metadata.json"), "r", encoding="utf-8") as f:
+            ext_meta = json.load(f)
+        if ext_meta.get("url") != "https://github.com/HA-ir/WatchAI":
+            sys.stderr.write(f"Error: Installed extension has incorrect URL: {ext_meta.get('url')}\n")
             return False
+
+        # Extension local schemas (dual-location strategy)
+        local_schema_xml = os.path.join(
+            ext_dir, "schemas", "org.gnome.shell.extensions.watchai.gschema.xml"
+        )
+        local_compiled = os.path.join(ext_dir, "schemas", "gschemas.compiled")
+        if not os.path.isfile(local_schema_xml):
+            sys.stderr.write(f"Error: Extension local schema XML missing: {local_schema_xml}\n")
+            return False
+        if not os.path.isfile(local_compiled):
+            sys.stderr.write(f"Error: Extension local gschemas.compiled missing: {local_compiled}\n")
+            return False
+
+        for fpath in [local_schema_xml, local_compiled]:
+            fmode = stat.S_IMODE(os.stat(fpath).st_mode)
+            if fmode & 0o022 != 0 or fmode & 0o111 != 0:
+                sys.stderr.write(f"Error: Local schema file {fpath} has unsafe mode: {oct(fmode)}\n")
+                return False
 
         # System schemas
         sys_xml = os.path.join(
@@ -204,7 +258,11 @@ def run_full_packaging_verification(repo_root: str) -> bool:
             "org.gnome.shell.extensions.watchai.gschema.xml",
         )
         if not os.path.isfile(sys_xml):
-            print(f"Error: System schema XML missing: {sys_xml}", file=sys.stderr)
+            sys.stderr.write(f"Error: System schema XML missing: {sys_xml}\n")
+            return False
+        sys_mode = stat.S_IMODE(os.stat(sys_xml).st_mode)
+        if sys_mode & 0o022 != 0 or sys_mode & 0o111 != 0:
+            sys.stderr.write(f"Error: System schema {sys_xml} has unsafe mode: {oct(sys_mode)}\n")
             return False
 
         # Systemd service unit
@@ -216,43 +274,73 @@ def run_full_packaging_verification(repo_root: str) -> bool:
             "watchai.service",
         )
         if not os.path.isfile(service_file):
-            print(f"Error: systemd service unit missing: {service_file}", file=sys.stderr)
+            sys.stderr.write(f"Error: systemd service unit missing: {service_file}\n")
+            return False
+
+        service_mode = stat.S_IMODE(os.stat(service_file).st_mode)
+        if service_mode & 0o022 != 0 or service_mode & 0o111 != 0:
+            sys.stderr.write(f"Error: Service unit {service_file} has unsafe mode: {oct(service_mode)}\n")
             return False
 
         with open(service_file, "r", encoding="utf-8") as f:
             service_body = f.read()
         expected_exec = f"ExecStart={prefix_dir}/bin/watchai-daemon"
         if expected_exec not in service_body:
-            print(f"Error: Service unit missing expected ExecStart: {expected_exec}\nGot:\n{service_body}", file=sys.stderr)
+            sys.stderr.write(
+                f"Error: Service unit missing expected ExecStart: {expected_exec}\nGot:\n{service_body}\n"
+            )
             return False
 
-        # 5. Clean uninstallation
+        # 5. Comprehensive clean uninstallation
         print(f"Step 5: {ninja_bin} -C {build_dir} uninstall")
         res = subprocess.run([ninja_bin, "-C", build_dir, "uninstall"], capture_output=True, text=True)
         if res.returncode != 0:
-            print(f"ninja uninstall failed:\nSTDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}", file=sys.stderr)
+            sys.stderr.write(f"ninja uninstall failed:\nSTDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}\n")
             return False
 
-        # Verify removal
-        if os.path.exists(daemon_bin):
-            print(f"Error: Daemon binary was not removed by uninstall: {daemon_bin}", file=sys.stderr)
+        # Verify that all WatchAI artifacts are gone
+        remaining_watchai_files = []
+        for root, _, files in os.walk(prefix_dir):
+            for fname in files:
+                if "watchai" in fname.lower():
+                    remaining_watchai_files.append(os.path.join(root, fname))
+
+        if remaining_watchai_files:
+            sys.stderr.write(
+                f"Error: Uninstallation incomplete! Residual files remain:\n"
+                + "\n".join(remaining_watchai_files)
+                + "\n"
+            )
             return False
-        if os.path.exists(local_compiled):
-            print(f"Error: Local gschemas.compiled was not removed by uninstall: {local_compiled}", file=sys.stderr)
+
+        if os.path.exists(daemon_bin):
+            sys.stderr.write(f"Error: Daemon binary was not removed: {daemon_bin}\n")
             return False
         if os.path.exists(service_file):
-            print(f"Error: Service file was not removed by uninstall: {service_file}", file=sys.stderr)
+            sys.stderr.write(f"Error: Service unit was not removed: {service_file}\n")
+            return False
+        if os.path.exists(ext_dir) and any(os.scandir(ext_dir)):
+            sys.stderr.write(f"Error: Extension directory still contains files: {ext_dir}\n")
+            return False
+        if os.path.exists(sys_xml):
+            sys.stderr.write(f"Error: System schema XML was not removed: {sys_xml}\n")
             return False
 
         # 6. Reinstallation idempotency
         print(f"Step 6: {ninja_bin} -C {build_dir} install (reinstallation idempotency)")
         res = subprocess.run([ninja_bin, "-C", build_dir, "install"], capture_output=True, text=True)
         if res.returncode != 0:
-            print(f"ninja reinstall failed:\nSTDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}", file=sys.stderr)
+            sys.stderr.write(f"ninja reinstall failed:\nSTDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}\n")
             return False
 
         if not os.path.isfile(daemon_bin):
-            print(f"Error: Reinstall failed to materialize daemon binary: {daemon_bin}", file=sys.stderr)
+            sys.stderr.write(f"Error: Reinstall failed to materialize daemon binary: {daemon_bin}\n")
+            return False
+        if not os.path.isfile(local_compiled):
+            sys.stderr.write(f"Error: Reinstall failed to materialize compiled schema: {local_compiled}\n")
+            return False
+        if not os.path.isfile(service_file):
+            sys.stderr.write(f"Error: Reinstall failed to materialize service unit: {service_file}\n")
             return False
 
         print("\nAll dynamic packaging checks PASSED successfully!")
@@ -260,12 +348,26 @@ def run_full_packaging_verification(repo_root: str) -> bool:
 
 
 def main():
+    parser = argparse.ArgumentParser(description="WatchAI packaging verification runner")
+    parser.add_argument(
+        "--static-only",
+        action="store_true",
+        help="Run static packaging asset checks only without requiring meson/ninja",
+    )
+    args = parser.parse_args()
+
     repo_root = os.path.abspath(
         os.path.join(os.path.dirname(__file__), "..", "..")
     )
-    success = run_full_packaging_verification(repo_root)
+
+    if args.static_only:
+        success = check_static_packaging_assets(repo_root)
+    else:
+        success = run_full_packaging_verification(repo_root)
+
     if not success:
         sys.exit(1)
+
     print("\nPackaging verification completed successfully.")
     sys.exit(0)
 

@@ -41,31 +41,31 @@
 
 ## 3. Session Lifecycle & State-Machine Semantics
 
-- [x] CHK011 Are the 8 conceptual lifecycle states (`IDLE`, `ACTIVE`, `THINKING`, `EXECUTING_TOOL`, `ATTENTION_REQUIRED`, `COMPLETED`, `TERMINATED`, `FAILED`) exhaustively defined with non-overlapping boundaries? [Clarity, Spec §FR-001, Data Model §1.1]
-  *Evidence*: `crates/watchai-core/src/state.rs` defines the 8 `LifecycleState` variants with explicit display labels, active checks, and priority rankings.
-- [x] CHK012 Is the semantic distinction between an agent blocked mid-task (`ATTENTION_REQUIRED`) versus ready at an interactive prompt (`IDLE`) unambiguously specified? [Clarity, Spec §Clarifications, Spec §FR-001]
-  *Evidence*: `ATTENTION_REQUIRED` has priority score 8 and triggers notifications; `IDLE` has priority score 4 and indicates passive readiness. Tested in `crates/watchai-core/src/state.rs`.
+- [x] CHK011 Are the 8 conceptual lifecycle states (`IDLE`, `STARTING`, `WORKING`, `WAITING`, `SUCCESS`, `ERROR`, `CANCELLED`, `UNKNOWN`) exhaustively defined with non-overlapping boundaries? [Clarity, Spec §FR-001, Data Model §1.1]
+  *Evidence*: `crates/watchai-core/src/state.rs` defines the 8 canonical `LifecycleState` variants (`Idle`, `Starting`, `Working`, `Waiting`, `Success`, `Error`, `Cancelled`, `Unknown`) with non-overlapping boundaries, display strings, and priority scores.
+- [x] CHK012 Is the semantic distinction between an agent blocked mid-task (`WAITING`) versus ready at an interactive prompt (`IDLE`) unambiguously specified? [Clarity, Spec §Clarifications, Spec §FR-001]
+  *Evidence*: `LifecycleState::Waiting` (priority 70) designates an agent blocked mid-task awaiting user input or tool approval; `LifecycleState::Idle` (priority 10) designates passive prompt readiness.
 - [x] CHK013 Are permitted state transition edges and rejected transition handling explicitly documented in a state transition matrix? [Completeness, Spec §FR-002, Data Model §2]
-  *Evidence*: `LifecycleState::can_transition_to` enforces legal transitions, rejecting illegal edges (e.g. terminal transitions) with unit test coverage in `crates/watchai-core/src/state.rs`.
-- [x] CHK014 Is the post-completion dwell duration for `COMPLETED` states quantified with exact default timeout thresholds? [Measurability, Spec §FR-006, Data Model §2]
-  *Evidence*: `crates/watchai-core/src/session.rs` defines `COMPLETION_DWELL_SECONDS = 10`. Verified by E2E test Scenario 2 in `tests/e2e/scenarios.rs`.
+  *Evidence*: `LifecycleState::can_transition_to` in `crates/watchai-core/src/state.rs` enforces legal FSM transition edges, tested in `crates/watchai-core/tests/state_machine_tests.rs`.
+- [x] CHK014 Is the post-completion dwell duration for `SUCCESS` and `CANCELLED` states quantified with exact default timeout thresholds? [Measurability, Spec §FR-006, Data Model §2]
+  *Evidence*: `crates/watchai-core/src/session.rs` defines `COMPLETION_DWELL_SECONDS = 10` (matching GSettings `dwell-duration-seconds` default 10). Verified by E2E test in `tests/e2e/scenario2_lifecycle_test.rs`.
 - [x] CHK015 Does the specification define how an agent session transitions when an interrupted task is resumed by the user? [Coverage, Data Model §2]
-  *Evidence*: `SessionLifecycleEvent::StateChanged` supports transitions from idle or interrupted states back to `ACTIVE`, updating `state_entered_at` and `last_seen_at`.
+  *Evidence*: `LifecycleState::can_transition_to` permits transitions from `Cancelled`, `Error`, or `Success` back to `Starting` or `Working`, updating `state_entered_at` and `last_seen_at`.
 
 ---
 
 ## 4. Multi-Session Concurrency & Deterministic Aggregate Status
 
 - [x] CHK016 Is the multi-session conflict resolution rule quantified by an explicit, unambiguous priority hierarchy formula? [Measurability, Spec §FR-004, Data Model §3]
-  *Evidence*: Implemented in `crates/watchai-core/src/session.rs` (`compute_aggregate_state`) and `crates/watchai-core/src/state.rs` (`state_priority_score`): ATTENTION_REQUIRED (8) > EXECUTING_TOOL (7) > THINKING (6) > ACTIVE (5) > IDLE (4) > COMPLETED (3) > FAILED (2) > TERMINATED (1).
+  *Evidence*: `LifecycleState::priority_score` and `compute_aggregate_state` in `crates/watchai-core/src/state.rs` and `session.rs` enforce: ERROR (80) > WAITING (70) > WORKING (60) > STARTING (50) > CANCELLED (40) > SUCCESS (30) > UNKNOWN (20) > IDLE (10). Tested in `crates/watchai-core/tests/aggregation_tests.rs`.
 - [x] CHK017 Does the specification define how multiple concurrent sessions belonging to the exact same provider are uniquely identified and disambiguated? [Completeness, Spec §FR-015, Spec §FR-016]
-  *Evidence*: `crates/watchai-core/src/session.rs` derives deterministic session IDs via `derive_process_session_id(provider_id, pid, process_start_time)`, uniquely hashing PID and start timestamp.
+  *Evidence*: `crates/watchai-core/src/session.rs` derives deterministic session IDs via `derive_process_session_id(pid, process_start_time, project_path)`, uniquely hashing PID, start time, and workspace path.
 - [x] CHK018 Are session popover presentation requirements defined for when zero, one, or twenty concurrent sessions exist? [Coverage, Spec §FR-009, Spec §User Story 2]
   *Evidence*: `extension/popover.js` dynamically renders an empty-state placeholder when 0 sessions exist and a scrollable container for single or multiple concurrent sessions.
 - [x] CHK019 Is the sorting order of session cards in the popover menu explicitly specified (e.g., urgency-first, then duration)? [Clarity, Spec §User Story 2]
-  *Evidence*: `extension/popover.js` sorts session cards by urgency priority score descending (`state_priority_score`), and secondarily by start duration descending.
+  *Evidence*: `extension/popover.js` sorts session cards by urgency priority score descending (`ERROR` > `WAITING` > `WORKING` ...), and secondarily by start duration descending.
 - [x] CHK020 Does the specification define how completed/terminal sessions are displayed before retention expiration? [Completeness, Spec §FR-018, Data Model §2]
-  *Evidence*: `crates/watchai-core/src/session.rs` retains completed sessions during the 10s dwell window, after which `purge_stale_sessions` cleans up terminated sessions.
+  *Evidence*: Terminal sessions dwell in aggregate state for `COMPLETION_DWELL_SECONDS = 10`, are retained in memory for `RETENTION_WINDOW_SECONDS = 60`, and are pruned by `purge_stale_sessions`.
 
 ---
 
@@ -80,7 +80,7 @@
 - [x] CHK024 Are timeout thresholds quantified for `WORKING` silence (5 min) versus `STARTING` silence (1 min) when PID is unknown? [Measurability, Spec §FR-017]
   *Evidence*: Liveness monitor configuration quantifies silence timeouts, marking unresponsive unlinked sessions terminated after timeout expiration.
 - [x] CHK025 Does the specification quantify the maximum detection latency (5 seconds) for ungraceful agent crashes (`kill -9`)? [Measurability, Spec §FR-017, Success Criteria §SC-004]
-  *Evidence*: 2-cycle failure hysteresis with 2.0s poll interval guarantees ungraceful process terminations are detected and transitioned to `TERMINATED` within $\le 4.0\text{s}$, verified in E2E Scenario 3 (`tests/e2e/scenarios.rs`).
+  *Evidence*: 2-cycle failure hysteresis with 2.0s poll interval guarantees ungraceful process terminations are detected and transitioned to `ERROR` within <= 4.0s, verified in E2E Scenario 4 (`tests/e2e/scenario4_crash_test.rs`).
 
 ---
 
@@ -160,7 +160,7 @@
 ## 11. Configuration, Installation & Desktop Packaging
 
 - [x] CHK050 Are configurable user settings (dwell times, notification toggles, top-bar display modes) explicitly listed with default values? [Completeness, Spec §FR-026, Spec §FR-027]
-  *Evidence*: `extension/schemas/org.gnome.shell.extensions.watchai.gschema.xml` defines `notify-on-attention` (true), `notify-on-completion` (false), `badge-counter-mode` ('total-active'), `filter-threshold` ('all').
+  *Evidence*: `extension/schemas/org.gnome.shell.extensions.watchai.gschema.xml` defines `dwell-duration-seconds` (10), `enable-desktop-notifications` (true), `notify-on-waiting` (true), `notify-on-error` (true), `indicator-icon-style` ('symbolic').
 - [x] CHK051 Does the plan specify standard desktop configuration storage using GSettings (`org.gnome.shell.extensions.watchai`)? [Clarity, Plan §Technical Context, Plan §Phase 5]
   *Evidence*: `extension/settings.js` wraps `org.gnome.shell.extensions.watchai` with reactive change listeners and safe in-memory fallback.
 - [x] CHK052 Are installation requirements specified for systemd user service units (`~/.config/systemd/user/` or `/usr/lib/systemd/user/`)? [Completeness, Plan §Research §5]
@@ -168,7 +168,7 @@
 - [x] CHK053 Does the plan define clean uninstallation expectations ensuring no orphaned systemd services or GSettings keys remain? [Completeness, Plan §Phase 6]
   *Evidence*: `ninja -C build uninstall` removes all installed files, and `verify_packaging.py` tests clean uninstallation in an isolated prefix.
 - [x] CHK054 Are notification rate-limiting requirements specified to prevent desktop notification spam during rapid transitions? [Edge Case, Spec §Edge Cases, Spec §FR-026]
-  *Evidence*: `extension/notifications.js` implements debouncing and session state tracking to ensure duplicate notifications are not emitted.
+  *Evidence*: `extension/notifications.js` implements a 5.0-second per-session cooldown (`COOLDOWN_MS = 5000`), edge-triggered gating on `WAITING` and `ERROR`, heartbeat suppression, and zero queueing/replaying. Tested in `extension/tests/test_notifications.js`.
 
 ---
 
@@ -181,7 +181,7 @@
 - [x] CHK057 Does the plan provide a standalone mock test CLI (`watchai-mock`) to simulate agent events without executing real LLM agents? [Testability, Plan §Phase 6, Quickstart §Scenario 2]
   *Evidence*: `crates/watchai-mock/` implements the `watchai-mock` CLI with `session` and `worker` simulation commands.
 - [x] CHK058 Are end-to-end verification scenarios defined with runnable step-by-step instructions in a quickstart guide? [Completeness, Plan §Quickstart, Quickstart §2]
-  *Evidence*: Scenarios 1–4 implemented in `tests/e2e/scenarios.rs` and documented in `docs/e2e-testing.md`.
+  *Evidence*: Scenarios 1–4 automated in `tests/e2e/scenario1_startup_test.rs`, `scenario2_lifecycle_test.rs`, `scenario3_aggregation_test.rs`, `scenario4_crash_test.rs` and documented in `docs/e2e-testing.md`.
 - [x] CHK059 Does the plan mandate documentation updates (architecture, IPC contracts, discovery notes) as part of each phase delivery? [Completeness, Plan §Phases 1-6, Constitution Principle VII]
   *Evidence*: `docs/architecture.md`, `docs/contracts/org.freedesktop.WatchAI.xml`, `docs/e2e-testing.md`, `docs/adapter-development.md`, and `README.md` are fully maintained.
 

@@ -7,9 +7,9 @@
 ## Features
 
 - **Multi-Agent Monitoring**: Automatically detects active coding agent sessions across your local system.
-- **Real-Time Lifecycle Tracking**: Displays agent states (`ACTIVE`, `THINKING`, `EXECUTING_TOOL`, `ATTENTION_REQUIRED`, `IDLE`, `COMPLETED`, `TERMINATED`, `FAILED`) in real time.
+- **Real-Time Lifecycle Tracking**: Displays canonical agent states (`IDLE`, `STARTING`, `WORKING`, `WAITING`, `SUCCESS`, `ERROR`, `CANCELLED`, `UNKNOWN`) in real time.
 - **GNOME Shell Integration**: Native top-bar status icon with badge counter and interactive popover showing session details, duration, working directories, active tools, and direct focus actions.
-- **Configurable Desktop Notifications**: Optional system notifications when agents require human attention (approval/input) or finish their work.
+- **Configurable Desktop Notifications**: Native desktop notifications when agents enter `WAITING` (for approval or input) or `ERROR` (crashed or failed), with strict 5-second per-session cooldown and zero-leakage privacy.
 - **Zero-Leakage Privacy**: Operates 100% locally on your machine. Never collects, transmits, or logs user prompts, source code, git diffs, tool parameters, or API keys.
 
 ---
@@ -64,7 +64,7 @@ meson setup build --prefix=$HOME/.local
 ```bash
 ninja -C build
 ```
-*Note: Meson orchestrates Cargo behind the scenes to compile the production daemon (`watchai-daemon`) in release mode using an isolated target directory.*
+*Note: Meson orchestrates Cargo behind the scenes to compile the production daemon (`watchai-daemon`) in release mode using an isolated target directory (`<builddir>/cargo-target`), leaving the repository source tree untouched.*
 
 ### 3. Install
 ```bash
@@ -75,6 +75,7 @@ This installs:
 - The production daemon binary to `$HOME/.local/bin/watchai-daemon`.
 - The GNOME Shell extension to `$HOME/.local/share/gnome-shell/extensions/watchai@gnome.org/`.
 - Pre-compiled GSettings schemas to `$HOME/.local/share/gnome-shell/extensions/watchai@gnome.org/schemas/`.
+- System GSettings schemas to `$HOME/.local/share/glib-2.0/schemas/`.
 - The systemd user service unit to `$HOME/.local/share/systemd/user/watchai.service`.
 
 ---
@@ -116,30 +117,41 @@ WatchAI stores user preferences in GSettings under the schema `org.gnome.shell.e
 
 | Setting Key | Type | Default | Description |
 | :--- | :---: | :---: | :--- |
-| `notify-on-attention` | boolean | `true` | Send a desktop notification when an agent enters `ATTENTION_REQUIRED`. |
-| `notify-on-completion` | boolean | `false` | Send a desktop notification when an agent enters `COMPLETED`. |
-| `badge-counter-mode` | enum | `'total-active'` | Top-bar badge counter mode (`'total-active'` or `'attention-only'`). |
-| `filter-threshold` | enum | `'all'` | Popover session filter threshold (`'all'`, `'active-only'`, or `'attention-only'`). |
+| `dwell-duration-seconds` | uint32 | `10` | Completion dwell duration in seconds (range 1–60) before completed sessions settle. |
+| `enable-desktop-notifications` | boolean | `true` | Master switch to enable or disable desktop notifications for agent lifecycle transitions. |
+| `notify-on-waiting` | boolean | `true` | Dispatch a desktop notification when an agent enters `WAITING` requiring user interaction or approval. |
+| `notify-on-error` | boolean | `true` | Dispatch a desktop notification when an agent enters `ERROR` or crashes. |
+| `indicator-icon-style` | string enum | `'symbolic'` | Top-bar indicator visual style: `'symbolic'` (monochrome desktop theme) or `'colored'` (state-colored accents). |
+
+### Notification Behavior & Privacy
+WatchAI notifications follow strict runtime rules implemented in `extension/notifications.js`:
+- **Edge-Triggered Only**: Notifications are dispatched strictly when a session transitions *into* `WAITING` or `ERROR`.
+- **Heartbeat & Duplicate Suppression**: Repeated updates or heartbeats in the same state never trigger notifications.
+- **Per-Session Cooldown**: A strict 5.0-second cooldown is enforced per session. Events occurring inside the cooldown window are dropped immediately with no queuing and no replaying.
+- **Zero-Leakage Privacy**: Notification bodies use generic static text (`"Agent is waiting for user input or approval."` or `"Agent encountered an error or crashed."`). Notification titles display only the sanitized project folder basename (`WatchAI: <ProviderName> (<ProjectName>)`). Prompts, tool arguments, code, secrets, and full directory paths are never included.
 
 ### Modifying Settings via CLI
 
 You can inspect and update preferences using `gsettings`:
 
 ```bash
-# Set schema directory for user-local query
+# Point to schema directory for user-local terminal queries
 export GSETTINGS_SCHEMA_DIR="$HOME/.local/share/gnome-shell/extensions/watchai@gnome.org/schemas"
 
-# Enable notifications on task completion
-gsettings set org.gnome.shell.extensions.watchai notify-on-completion true
+# Inspect current dwell duration
+gsettings get org.gnome.shell.extensions.watchai dwell-duration-seconds
 
-# Change badge counter to display attention-required sessions only
-gsettings set org.gnome.shell.extensions.watchai badge-counter-mode 'attention-only'
+# Adjust dwell duration to 15 seconds
+gsettings set org.gnome.shell.extensions.watchai dwell-duration-seconds 15
 
-# Filter popover to active sessions only
-gsettings set org.gnome.shell.extensions.watchai filter-threshold 'active-only'
+# Switch indicator to colored accent style
+gsettings set org.gnome.shell.extensions.watchai indicator-icon-style 'colored'
 
-# Read current setting
-gsettings get org.gnome.shell.extensions.watchai notify-on-attention
+# Disable notifications on error
+gsettings set org.gnome.shell.extensions.watchai notify-on-error false
+
+# Master notification toggle
+gsettings set org.gnome.shell.extensions.watchai enable-desktop-notifications false
 ```
 
 ---
@@ -155,6 +167,9 @@ busctl --user introspect org.freedesktop.WatchAI /org/freedesktop/WatchAI
 
 # Query active sessions directly
 busctl --user call org.freedesktop.WatchAI /org/freedesktop/WatchAI org.freedesktop.WatchAI GetSessions
+
+# Query aggregate state directly
+busctl --user call org.freedesktop.WatchAI /org/freedesktop/WatchAI org.freedesktop.WatchAI GetAggregateState
 ```
 
 ### Viewing Daemon Logs
