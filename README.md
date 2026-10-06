@@ -8,7 +8,7 @@
 
 - **Multi-Agent Monitoring**: Automatically detects active coding agent sessions across your local system.
 - **Real-Time Lifecycle Tracking**: Displays canonical agent states (`IDLE`, `STARTING`, `WORKING`, `WAITING`, `SUCCESS`, `ERROR`, `CANCELLED`, `UNKNOWN`) in real time.
-- **GNOME Shell Integration**: Native top-bar status icon with badge counter and interactive popover showing session details, duration, working directories, active tools, and direct focus actions.
+- **GNOME Shell Integration**: Native top-bar status icon with multi-session counter and interactive popover displaying active sessions, duration, sanitized workspace project names, PIDs, and active tool categories.
 - **Configurable Desktop Notifications**: Native desktop notifications when agents enter `WAITING` (for approval or input) or `ERROR` (crashed or failed), with strict 5-second per-session cooldown and zero-leakage privacy.
 - **Zero-Leakage Privacy**: Operates 100% locally on your machine. Never collects, transmits, or logs user prompts, source code, git diffs, tool parameters, or API keys.
 

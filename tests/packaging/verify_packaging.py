@@ -283,6 +283,13 @@ def run_full_packaging_verification(repo_root: str) -> bool:
 
         # Verify compiled schema validity using gsettings --schemadir
         gsettings_bin = shutil.which("gsettings")
+        expected_keys = [
+            "dwell-duration-seconds",
+            "enable-desktop-notifications",
+            "notify-on-waiting",
+            "notify-on-error",
+            "indicator-icon-style",
+        ]
         if gsettings_bin:
             # 1. Test extension-local compiled schema
             ext_schema_dir = os.path.join(ext_dir, "schemas")
@@ -291,11 +298,18 @@ def run_full_packaging_verification(repo_root: str) -> bool:
                 capture_output=True,
                 text=True,
             )
-            if res_ext.returncode != 0 or "dwell-duration-seconds" not in res_ext.stdout:
+            if res_ext.returncode != 0:
                 sys.stderr.write(
-                    f"Error: Extension compiled schema is invalid or missing WatchAI keys:\n{res_ext.stderr}\n"
+                    f"Error: Extension compiled schema query failed:\n{res_ext.stderr}\n"
                 )
                 return False
+            ext_keys = set(res_ext.stdout.strip().splitlines())
+            for req_key in expected_keys:
+                if req_key not in ext_keys:
+                    sys.stderr.write(
+                        f"Error: Extension compiled schema missing required key '{req_key}'\nFound: {ext_keys}\n"
+                    )
+                    return False
 
             # 2. Test system-level compiled schema
             res_sys = subprocess.run(
@@ -303,11 +317,18 @@ def run_full_packaging_verification(repo_root: str) -> bool:
                 capture_output=True,
                 text=True,
             )
-            if res_sys.returncode != 0 or "dwell-duration-seconds" not in res_sys.stdout:
+            if res_sys.returncode != 0:
                 sys.stderr.write(
-                    f"Error: System compiled schema is invalid or missing WatchAI keys:\n{res_sys.stderr}\n"
+                    f"Error: System compiled schema query failed:\n{res_sys.stderr}\n"
                 )
                 return False
+            sys_keys = set(res_sys.stdout.strip().splitlines())
+            for req_key in expected_keys:
+                if req_key not in sys_keys:
+                    sys.stderr.write(
+                        f"Error: System compiled schema missing required key '{req_key}'\nFound: {sys_keys}\n"
+                    )
+                    return False
 
         # Systemd service unit
         service_file = os.path.join(
@@ -412,11 +433,18 @@ def run_full_packaging_verification(repo_root: str) -> bool:
                 capture_output=True,
                 text=True,
             )
-            if res_reinstall.returncode != 0 or "dwell-duration-seconds" not in res_reinstall.stdout:
+            if res_reinstall.returncode != 0:
                 sys.stderr.write(
-                    f"Error: Reinstalled system schema is invalid or inaccessible:\n{res_reinstall.stderr}\n"
+                    f"Error: Reinstalled system schema query failed:\n{res_reinstall.stderr}\n"
                 )
                 return False
+            reinstall_keys = set(res_reinstall.stdout.strip().splitlines())
+            for req_key in expected_keys:
+                if req_key not in reinstall_keys:
+                    sys.stderr.write(
+                        f"Error: Reinstalled system schema missing required key '{req_key}'\nFound: {reinstall_keys}\n"
+                    )
+                    return False
 
         print("\nAll dynamic packaging checks PASSED successfully!")
         return True
