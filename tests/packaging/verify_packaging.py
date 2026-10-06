@@ -141,12 +141,12 @@ def run_full_packaging_verification(repo_root: str) -> bool:
         prefix_dir = os.path.join(tmpdir, "prefix")
 
         # 1. Meson setup
-        print(f"Step 1: meson setup {build_dir} --prefix={prefix_dir}")
+        print(f"Step 1: meson setup --prefix={prefix_dir} {build_dir} {repo_root}")
         setup_cmd = [
             meson_bin,
             "setup",
-            build_dir,
             f"--prefix={prefix_dir}",
+            build_dir,
             repo_root,
         ]
         res = subprocess.run(setup_cmd, capture_output=True, text=True)

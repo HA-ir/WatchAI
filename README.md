@@ -117,7 +117,7 @@ WatchAI stores user preferences in GSettings under the schema `org.gnome.shell.e
 
 | Setting Key | Type | Default | Description |
 | :--- | :---: | :---: | :--- |
-| `dwell-duration-seconds` | uint32 | `10` | Completion dwell duration in seconds (range 1–60) before completed sessions settle. |
+| `dwell-duration-seconds` | uint32 | `10` | Extension-exposed completion dwell preference in seconds (range 1–60, default: 10). Note: The background daemon/core remains authoritative for actual lifecycle dwell timing. |
 | `enable-desktop-notifications` | boolean | `true` | Master switch to enable or disable desktop notifications for agent lifecycle transitions. |
 | `notify-on-waiting` | boolean | `true` | Dispatch a desktop notification when an agent enters `WAITING` requiring user interaction or approval. |
 | `notify-on-error` | boolean | `true` | Dispatch a desktop notification when an agent enters `ERROR` or crashes. |
