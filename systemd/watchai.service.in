@@ -1,0 +1,16 @@
+[Unit]
+Description=WatchAI AI Agent Activity Monitor Daemon
+Documentation=https://github.com/HA-ir/WatchAI
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=notify
+BusName=org.freedesktop.WatchAI
+ExecStart=@bindir@/watchai-daemon
+Restart=on-failure
+RestartSec=2s
+Slice=session.slice
+
+[Install]
+WantedBy=graphical-session.target
