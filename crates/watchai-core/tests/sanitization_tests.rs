@@ -84,6 +84,10 @@ fn test_internal_liveness_fields_excluded_from_serialization() {
         !json_obj.contains_key("consecutive_proc_failures"),
         "Security violation: internal consecutive_proc_failures leaked into serialized JSON!"
     );
+    assert!(
+        !json_obj.contains_key("is_terminated"),
+        "Security violation: internal is_terminated leaked into serialized JSON!"
+    );
 }
 
 #[test]

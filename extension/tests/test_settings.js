@@ -16,7 +16,7 @@ function assertEqual(actual, expected, message) {
 
 function testFallbackSettingsDefaults() {
     const fallback = new FallbackSettings();
-    assertEqual(fallback.get_uint('dwell-duration-seconds'), 10, 'Default dwell duration must be 10');
+    assertEqual(fallback.get_uint('dwell-duration-seconds'), 60, 'Default dwell duration must be 60');
     assertEqual(fallback.get_boolean('enable-desktop-notifications'), true, 'Default notifications must be true');
     assertEqual(fallback.get_boolean('notify-on-waiting'), true, 'Default notify-on-waiting must be true');
     assertEqual(fallback.get_boolean('notify-on-error'), true, 'Default notify-on-error must be true');
@@ -28,7 +28,7 @@ function testSettingsManagerTypedGetters() {
     const fallback = new FallbackSettings();
     const mgr = new SettingsManager(fallback);
 
-    assertEqual(mgr.getDwellDurationSeconds(), 10, 'Getter for dwell duration');
+    assertEqual(mgr.getDwellDurationSeconds(), 60, 'Getter for dwell duration');
     assertEqual(mgr.getEnableNotifications(), true, 'Getter for enable notifications');
     assertEqual(mgr.getNotifyOnWaiting(), true, 'Getter for notify-on-waiting');
     assertEqual(mgr.getNotifyOnError(), true, 'Getter for notify-on-error');

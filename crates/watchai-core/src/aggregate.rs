@@ -5,7 +5,7 @@ use crate::state::LifecycleState;
 
 /// Duration in seconds that terminal states (SUCCESS, CANCELLED, ERROR)
 /// participate in the top-bar aggregate state before resetting to IDLE.
-pub const COMPLETION_DWELL_SECONDS: i64 = 10;
+pub const COMPLETION_DWELL_SECONDS: i64 = 60;
 
 /// Output of pure desktop state aggregation calculation.
 #[derive(Debug, Clone, PartialEq, Eq)]

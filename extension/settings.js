@@ -1,7 +1,7 @@
 export const SCHEMA_ID = 'org.gnome.shell.extensions.watchai';
 
 export const DEFAULT_PREFERENCES = {
-    'dwell-duration-seconds': 10,
+    'dwell-duration-seconds': 60,
     'enable-desktop-notifications': true,
     'notify-on-waiting': true,
     'notify-on-error': true,

@@ -103,7 +103,7 @@ fn test_counter_calculations() {
     // S4: Idle (not active, not waiting, not error)
     let s4 = make_session("s4", LifecycleState::Idle, 10);
     // S5: Success past dwell (not active, not waiting, not error)
-    let s5 = make_session("s5", LifecycleState::Success, 15);
+    let s5 = make_session("s5", LifecycleState::Success, 70);
 
     let res = compute_aggregate_state(&[s1, s2, s3, s4, s5], now);
 
@@ -197,10 +197,10 @@ fn test_contextual_tie_breaking_recency_and_lexicographical() {
 }
 
 #[test]
-fn test_ten_second_completion_dwell() {
+fn test_sixty_second_completion_dwell() {
     let now = Utc::now();
 
-    // 1. Session in SUCCESS entered 5 seconds ago -> within dwell
+    // 1. Session in SUCCESS entered 5 seconds ago -> within dwell (5 <= 60)
     let s_active_dwell = make_session("sess-success", LifecycleState::Success, 5);
     assert!(within_dwell(&s_active_dwell, now));
 
@@ -208,15 +208,15 @@ fn test_ten_second_completion_dwell() {
     assert_eq!(res_dwell.aggregate_state, LifecycleState::Success);
     assert_eq!(res_dwell.active_session_count, 1);
 
-    // 2. Session in SUCCESS entered 11 seconds ago -> dwell expired
-    let s_expired_dwell = make_session("sess-success-expired", LifecycleState::Success, 11);
+    // 2. Session in SUCCESS entered 61 seconds ago -> dwell expired
+    let s_expired_dwell = make_session("sess-success-expired", LifecycleState::Success, 61);
     assert!(!within_dwell(&s_expired_dwell, now));
 
     let res_expired = compute_aggregate_state(std::slice::from_ref(&s_expired_dwell), now);
     assert_eq!(
         res_expired.aggregate_state,
         LifecycleState::Idle,
-        "Aggregate state must settle to IDLE after 10s dwell expires"
+        "Aggregate state must settle to IDLE after 60s dwell expires"
     );
     assert_eq!(
         res_expired.active_session_count, 0,
@@ -225,19 +225,19 @@ fn test_ten_second_completion_dwell() {
     // Crucial invariant: The session entity itself still retains its terminal state!
     assert_eq!(s_expired_dwell.current_state, LifecycleState::Success);
 
-    // 3. Error session also follows the 10s completion dwell
-    let s_error_dwell = make_session("sess-err", LifecycleState::Error, 3);
+    // 3. Error session also follows the 60s completion dwell
+    let s_error_dwell = make_session("sess-err", LifecycleState::Error, 30);
     let res_err = compute_aggregate_state(&[s_error_dwell], now);
     assert_eq!(res_err.aggregate_state, LifecycleState::Error);
     assert_eq!(res_err.active_session_count, 1);
     assert_eq!(res_err.error_session_count, 1);
 
-    let s_error_expired = make_session("sess-err-exp", LifecycleState::Error, 12);
+    let s_error_expired = make_session("sess-err-exp", LifecycleState::Error, 65);
     let res_err_exp = compute_aggregate_state(std::slice::from_ref(&s_error_expired), now);
     assert_eq!(
         res_err_exp.aggregate_state,
         LifecycleState::Idle,
-        "Aggregate state must settle to IDLE after 10s dwell even for ERROR"
+        "Aggregate state must settle to IDLE after 60s dwell even for ERROR"
     );
     assert_eq!(res_err_exp.active_session_count, 0);
     // But error_session_count still reflects that there is a session in ERROR in the registry

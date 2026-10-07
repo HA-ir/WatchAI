@@ -31,9 +31,13 @@ class WatchAIIndicator extends PanelMenu.Button {
 
         // Set AT-SPI accessible description (T065, FR-023)
         if (typeof this.get_accessible === 'function') {
-            const acc = this.get_accessible();
-            if (acc && typeof acc.set_description === 'function') {
-                acc.set_description('Click to open agent session popover menu');
+            try {
+                const acc = this.get_accessible();
+                if (acc && !(acc instanceof Atk.Action) && typeof acc.set_description === 'function') {
+                    acc.set_description('Click to open agent session popover menu');
+                }
+            } catch (_) {
+                // Defensive: Ignore GJS ATK interface dispatch conflicts
             }
         }
 

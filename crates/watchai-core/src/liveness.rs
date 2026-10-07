@@ -113,6 +113,7 @@ pub fn check_session_liveness<R: ProcStatReader>(
                 None => {
                     session.consecutive_proc_failures += 1;
                     if session.consecutive_proc_failures >= 2 {
+                        session.is_terminated = true;
                         let _ = session.transition_to(
                             LifecycleState::Error,
                             session.sequence_number + 1,
@@ -138,6 +139,7 @@ pub fn check_session_liveness<R: ProcStatReader>(
                         "PID reuse detected for session {}: recorded starttime {}, live starttime {}",
                         session.session_id, recorded, current_start_time
                     );
+                    session.is_terminated = true;
                     let _ = session.transition_to(
                         LifecycleState::Error,
                         session.sequence_number + 1,
@@ -166,6 +168,7 @@ pub fn check_session_liveness<R: ProcStatReader>(
             );
 
             if session.consecutive_proc_failures >= 2 {
+                session.is_terminated = true;
                 let _ =
                     session.transition_to(LifecycleState::Error, session.sequence_number + 1, None);
                 LivenessCheckResult::Dead {
@@ -201,8 +204,9 @@ pub fn check_silence_timeout(session: &mut AgentSession, now: DateTime<Utc>) -> 
 }
 
 /// Checks if a session has exceeded its 60-second terminal retention window.
+/// Live sessions (process still running) are never pruned; only terminated sessions expire.
 pub fn is_retention_expired(session: &AgentSession, now: DateTime<Utc>) -> bool {
-    if !session.current_state.is_terminal() {
+    if !session.is_terminated || !session.current_state.is_terminal() {
         return false;
     }
     (now - session.state_entered_at).num_seconds() >= RETENTION_WINDOW_SECONDS

@@ -3,7 +3,7 @@
   <schema id="org.gnome.shell.extensions.watchai" path="/org/gnome/shell/extensions/watchai/">
     <key name="dwell-duration-seconds" type="u">
       <range min="1" max="60"/>
-      <default>10</default>
+      <default>60</default>
       <summary>Completion dwell duration</summary>
       <description>Configured baseline completion dwell duration in seconds (1-60).</description>
     </key>
