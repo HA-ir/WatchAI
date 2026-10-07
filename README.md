@@ -17,6 +17,35 @@
 
 ---
 
+## Agent Integration & Telemetry
+
+WatchAI supports three methods to monitor AI coding agents. See the comprehensive [Agent Integration & Telemetry Guide](docs/agent-integration-guide.md) for full architectural details and event specifications.
+
+### 1. Claude Code CLI (`claude`) — Native Hooks
+Claude Code features built-in JSON lifecycle hooks. WatchAI can automatically register with your Claude settings:
+```bash
+# Register activity hooks in ~/.claude/settings.json
+watchai-daemon install-hooks
+```
+*(To uninstall: `watchai-daemon uninstall-hooks`)*
+
+### 2. OpenCode & OpenAI Codex CLI — Transparent Execution Wrapper (⭐ Recommended)
+For OpenCode and Codex CLI, the **most accurate, 0ms-latency approach** is the transparent execution wrapper. It immediately catches command execution, maps active turns to `WORKING`, and applies the full **60-second green `SUCCESS` dwell** on clean exit (or red `ERROR` on failure).
+
+Add these aliases to your `~/.bashrc` or `~/.zshrc`:
+```bash
+# OpenCode alias
+alias opencode="watchai-daemon wrap --provider opencode -- opencode"
+
+# OpenAI Codex CLI alias
+alias codex="watchai-daemon wrap --provider codex-cli -- codex"
+```
+
+### 3. Passive `/proc` Discovery (Zero Configuration)
+If you prefer not to configure aliases or hooks, WatchAI automatically scans `/proc` every 2 seconds for running `claude`, `opencode`, and `codex` instances, tracking PIDs and active workspaces in `IDLE` state out of the box.
+
+---
+
 ## Supported Environments
 
 - **Operating System**: Linux (Kernel 5.8 or later recommended for `/proc` monitoring).
