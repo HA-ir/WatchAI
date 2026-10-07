@@ -7,6 +7,7 @@ use tokio::sync::watch;
 use watchai_adapters::claude_code::{
     map_claude_hook_event, map_tool_category, ClaudeCodeAdapter, ClaudeTelemetryPayload,
 };
+use watchai_adapters::registry::AdapterRegistry;
 use watchai_adapters::traits::{EventSink, ProviderAdapter};
 use watchai_core::session::{
     process_lifecycle_event, AdapterStatus, AgentSession, SessionRegistry, ToolCategory,
@@ -187,6 +188,7 @@ async fn test_fsm_recovery_through_subsequent_events() {
     // 1. Prompt submit: Idle -> Working
     let p1 = ClaudeTelemetryPayload {
         pid: 5555,
+        provider_id: Some("claude-code".to_string()),
         claude_session_id: None,
         cwd: None,
         hook_event: "UserPromptSubmit".to_string(),
@@ -204,6 +206,7 @@ async fn test_fsm_recovery_through_subsequent_events() {
     // 2. PermissionRequest: Working -> Waiting
     let p2 = ClaudeTelemetryPayload {
         pid: 5555,
+        provider_id: Some("claude-code".to_string()),
         claude_session_id: None,
         cwd: None,
         hook_event: "PermissionRequest".to_string(),
@@ -221,6 +224,7 @@ async fn test_fsm_recovery_through_subsequent_events() {
     // 3. User approves, tool executes: Waiting -> Working (Recovery from Waiting)
     let p3 = ClaudeTelemetryPayload {
         pid: 5555,
+        provider_id: Some("claude-code".to_string()),
         claude_session_id: None,
         cwd: None,
         hook_event: "PreToolUse".to_string(),
@@ -238,6 +242,7 @@ async fn test_fsm_recovery_through_subsequent_events() {
     // 4. Tool fails: Working -> Error
     let p4 = ClaudeTelemetryPayload {
         pid: 5555,
+        provider_id: Some("claude-code".to_string()),
         claude_session_id: None,
         cwd: None,
         hook_event: "PostToolUseFailure".to_string(),
@@ -255,6 +260,7 @@ async fn test_fsm_recovery_through_subsequent_events() {
     // 5. User provides follow-up prompt: Error -> Working (Recovery from Error)
     let p5 = ClaudeTelemetryPayload {
         pid: 5555,
+        provider_id: Some("claude-code".to_string()),
         claude_session_id: None,
         cwd: None,
         hook_event: "UserPromptSubmit".to_string(),
@@ -272,6 +278,7 @@ async fn test_fsm_recovery_through_subsequent_events() {
     // 6. Turn completes: Working -> Success
     let p6 = ClaudeTelemetryPayload {
         pid: 5555,
+        provider_id: Some("claude-code".to_string()),
         claude_session_id: None,
         cwd: None,
         hook_event: "Stop".to_string(),
@@ -289,6 +296,7 @@ async fn test_fsm_recovery_through_subsequent_events() {
     // 7. User enters second prompt while in Success: Success -> Working (Multi-turn continuity)
     let p7 = ClaudeTelemetryPayload {
         pid: 5555,
+        provider_id: Some("claude-code".to_string()),
         claude_session_id: None,
         cwd: None,
         hook_event: "UserPromptSubmit".to_string(),
@@ -316,6 +324,7 @@ async fn test_fsm_recovery_through_subsequent_events() {
     // 7c. Turn completes while in Unknown: Unknown -> Success (Authoritative recovery)
     let p7c = ClaudeTelemetryPayload {
         pid: 5555,
+        provider_id: Some("claude-code".to_string()),
         claude_session_id: None,
         cwd: None,
         hook_event: "Stop".to_string(),
@@ -333,6 +342,7 @@ async fn test_fsm_recovery_through_subsequent_events() {
     // 8. Session terminates cleanly: SessionEnd -> SessionTerminated -> Success
     let p8 = ClaudeTelemetryPayload {
         pid: 5555,
+        provider_id: Some("claude-code".to_string()),
         claude_session_id: None,
         cwd: None,
         hook_event: "SessionEnd".to_string(),
@@ -380,6 +390,7 @@ async fn test_session_correlation_and_isolation() {
     // Send event for Session A
     let payload_a = ClaudeTelemetryPayload {
         pid: 1111,
+        provider_id: Some("claude-code".to_string()),
         claude_session_id: None,
         cwd: Some("/workspace/shared".to_string()),
         hook_event: "UserPromptSubmit".to_string(),
@@ -409,6 +420,7 @@ async fn test_session_correlation_and_isolation() {
     // Send event with unknown PID -> safely ignored without mutating registry
     let payload_unknown = ClaudeTelemetryPayload {
         pid: 999999,
+        provider_id: Some("claude-code".to_string()),
         claude_session_id: None,
         cwd: None,
         hook_event: "UserPromptSubmit".to_string(),
@@ -454,6 +466,7 @@ async fn test_activity_knowledge_boundary_preserved() {
 
     let payload = ClaudeTelemetryPayload {
         pid: 7777,
+        provider_id: Some("claude-code".to_string()),
         claude_session_id: None,
         cwd: None,
         hook_event: "PreToolUse".to_string(),
@@ -480,9 +493,10 @@ async fn test_telemetry_socket_listener_and_oversized_rejection() {
     let temp_dir = std::env::temp_dir().join(format!("watchai-sock-full-{}", std::process::id()));
     let sock_path = temp_dir.join("events.sock");
 
-    let adapter = Arc::new(ClaudeCodeAdapter::new());
+    let mut adapters = AdapterRegistry::default_registry();
     let (tx, mut rx) = tokio::sync::mpsc::channel(10);
-    adapter.attach_event_sink(EventSink::new(tx, None));
+    adapters.attach_event_sink(EventSink::new(tx, None));
+    let srv_adapter = Arc::new(adapters);
 
     let registry = SessionRegistry::new();
     let session = AgentSession::new(
@@ -498,7 +512,6 @@ async fn test_telemetry_socket_listener_and_oversized_rejection() {
 
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let srv_path = sock_path.clone();
-    let srv_adapter = adapter.clone();
     let srv_registry = registry.clone();
 
     let srv_handle = tokio::spawn(async move {
@@ -511,6 +524,7 @@ async fn test_telemetry_socket_listener_and_oversized_rejection() {
     let mut client = std::os::unix::net::UnixStream::connect(&sock_path).unwrap();
     let payload = ClaudeTelemetryPayload {
         pid: 8888,
+        provider_id: Some("claude-code".to_string()),
         claude_session_id: None,
         cwd: None,
         hook_event: "UserPromptSubmit".to_string(),

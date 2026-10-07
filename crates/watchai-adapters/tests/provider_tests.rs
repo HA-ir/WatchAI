@@ -103,36 +103,32 @@ fn test_cmdline_rejection_of_false_positives() {
 
 #[test]
 fn test_provider_capability_descriptors() {
-    // T109: Verify capability descriptors across all three registered adapters
+    // Verify capability descriptors across all three registered adapters:
+    // All 3 providers (Claude Code, Codex CLI, OpenCode) support OptInHookTelemetry
     let claude = ClaudeCodeAdapter::new();
     let codex = CodexCliAdapter::new();
     let opencode = OpenCodeAdapter::new();
 
-    let claude_caps = claude.capabilities();
-    assert_eq!(
-        claude_caps.telemetry_tier,
-        TelemetryTier::OptInHookTelemetry,
-        "ClaudeCodeAdapter must declare OptInHookTelemetry"
-    );
-    assert!(claude_caps.supports_tool_categories);
-    assert!(claude_caps.supports_activity_events);
-
-    for adapter in [&codex as &dyn ProviderAdapter, &opencode] {
+    for adapter in [
+        &claude as &dyn ProviderAdapter,
+        &codex as &dyn ProviderAdapter,
+        &opencode as &dyn ProviderAdapter,
+    ] {
         let caps = adapter.capabilities();
         assert_eq!(
             caps.telemetry_tier,
-            TelemetryTier::ProcessDiscoveryOnly,
-            "Adapter {} must declare ProcessDiscoveryOnly in Phase 8",
+            TelemetryTier::OptInHookTelemetry,
+            "Adapter {} must declare OptInHookTelemetry",
             adapter.provider_id()
         );
         assert!(
-            !caps.supports_tool_categories,
-            "Adapter {} must not claim tool category extraction",
+            caps.supports_tool_categories,
+            "Adapter {} must support tool categories",
             adapter.provider_id()
         );
         assert!(
-            !caps.supports_activity_events,
-            "Adapter {} must not claim live activity event streaming",
+            caps.supports_activity_events,
+            "Adapter {} must support activity events",
             adapter.provider_id()
         );
     }

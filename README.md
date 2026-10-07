@@ -7,10 +7,13 @@
 ## Features
 
 - **Multi-Agent Monitoring**: Automatically detects active coding agent sessions across your local system.
-- **Real-Time Lifecycle Tracking**: Displays canonical agent states (`IDLE`, `STARTING`, `WORKING`, `WAITING`, `SUCCESS`, `ERROR`, `CANCELLED`, `UNKNOWN`) in real time.
+- **Multi-Provider Telemetry**: Native lifecycle hooks and transparent execution wrapping (`watchai-daemon wrap`) for Claude Code, OpenCode, and OpenAI Codex CLI.
+- **Real-Time Lifecycle Tracking**: Displays canonical agent states (`IDLE`, `STARTING`, `WORKING`, `WAITING`, `SUCCESS`, `ERROR`, `CANCELLED`, `UNKNOWN`) in real time with a 60-second completion dwell duration.
 - **GNOME Shell Integration**: Native top-bar status icon with multi-session counter and interactive popover displaying active sessions, duration, sanitized workspace project names, PIDs, and active tool categories.
 - **Configurable Desktop Notifications**: Native desktop notifications when agents enter `WAITING` (for approval or input) or `ERROR` (crashed or failed), with strict 5-second per-session cooldown and zero-leakage privacy.
 - **Zero-Leakage Privacy**: Operates 100% locally on your machine. Never collects, transmits, or logs user prompts, source code, git diffs, tool parameters, or API keys.
+- **EGO Distribution Packaging**: Built-in support for generating compliant `.shell-extension.zip` bundles for extensions.gnome.org (`ninja -C build pack-extension` or `./install.sh --pack`).
+- **Continuous Integration**: Automated CI pipeline running unit tests, Clippy, GJS test suites, D-Bus session integration tests, and packaging verification on GitHub Actions.
 
 ---
 
@@ -115,6 +118,22 @@ However, if you wish to run `watchai-daemon` directly from your terminal, ensure
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 ```
+
+---
+
+### Extension Packaging (extensions.gnome.org)
+
+To generate a distribution bundle ready for upload to [extensions.gnome.org (EGO)](https://extensions.gnome.org/):
+
+```bash
+# Using the installer
+./install.sh --pack
+
+# Or using Ninja
+ninja -C build pack-extension
+```
+
+This compiles GSettings schemas and produces an audited distribution archive at `build/watchai@gnome.org.shell-extension.zip`.
 
 ---
 

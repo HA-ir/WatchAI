@@ -1,5 +1,6 @@
 use chrono::Utc;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::{debug, error, info, warn};
 use watchai_adapters::registry::AdapterRegistry;
@@ -86,7 +87,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if args.len() > 1 {
         match args[1].as_str() {
             "hook" => {
-                return watchai_daemon::hook_forwarder::run_hook_forwarder();
+                let mut provider = None;
+                let mut i = 2;
+                while i < args.len() {
+                    if args[i] == "--provider" && i + 1 < args.len() {
+                        provider = Some(args[i + 1].as_str());
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                return watchai_daemon::hook_forwarder::run_hook_forwarder(provider);
+            }
+            "wrap" => {
+                return watchai_daemon::wrapper::run_wrapper(&args[2..]);
             }
             "install-hooks" => {
                 let settings_path = args
@@ -175,11 +189,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--help" | "-h" => {
                 println!("Usage: watchai-daemon [COMMAND]\n");
                 println!("Commands:");
-                println!("  hook             Fast forwarder for Claude Code hooks (reads stdin)");
-                println!("  install-hooks    Register WatchAI activity hooks in Claude settings");
-                println!("  uninstall-hooks  Remove WatchAI activity hooks from Claude settings");
-                println!("  status-hooks     Inspect active WatchAI hooks in Claude settings");
-                println!("  (no command)     Run WatchAI background activity monitor daemon");
+                println!(
+                    "  hook [--provider <id>]   Fast forwarder for activity hooks (reads stdin)"
+                );
+                println!("  wrap [--provider <id>] -- <cmd> [args]  Transparent execution wrapper");
+                println!(
+                    "  install-hooks            Register WatchAI activity hooks in Claude settings"
+                );
+                println!(
+                    "  uninstall-hooks          Remove WatchAI activity hooks from Claude settings"
+                );
+                println!(
+                    "  status-hooks             Inspect active WatchAI hooks in Claude settings"
+                );
+                println!(
+                    "  (no command)             Run WatchAI background activity monitor daemon"
+                );
                 return Ok(());
             }
             _ => {}
@@ -306,27 +331,24 @@ async fn run_daemon() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
 
-    // Spawn production telemetry Unix socket listener (T022)
+    // Spawn production telemetry Unix socket listener (T022, Multi-Provider)
     let telemetry_socket_path = watchai_daemon::telemetry_socket::resolve_telemetry_socket_path();
-    let telemetry_handle = if let Some(claude_adapter) = adapter_registry.claude_adapter() {
-        let reg = registry.clone();
-        let s_rx = shutdown_tx.subscribe();
-        let sock_path = telemetry_socket_path.clone();
-        Some(tokio::spawn(async move {
-            if let Err(e) = watchai_daemon::telemetry_socket::run_telemetry_listener(
-                sock_path,
-                claude_adapter,
-                reg,
-                s_rx,
-            )
-            .await
-            {
-                warn!("Telemetry socket listener encountered error: {}", e);
-            }
-        }))
-    } else {
-        None
-    };
+    let reg = registry.clone();
+    let s_rx = shutdown_tx.subscribe();
+    let sock_path = telemetry_socket_path.clone();
+    let adapters_arc = Arc::new(adapter_registry.clone());
+    let telemetry_handle = Some(tokio::spawn(async move {
+        if let Err(e) = watchai_daemon::telemetry_socket::run_telemetry_listener(
+            sock_path,
+            adapters_arc,
+            reg,
+            s_rx,
+        )
+        .await
+        {
+            warn!("Telemetry socket listener encountered error: {}", e);
+        }
+    }));
 
     let ingest_registry = registry.clone();
     let ingest_agg = aggregate_lock.clone();

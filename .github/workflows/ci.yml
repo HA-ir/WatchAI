@@ -1,0 +1,87 @@
+name: WatchAI Continuous Integration
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lint-and-format:
+    name: Code Formatting & Static Analysis
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Verify code formatting
+        run: cargo fmt -- --check
+
+      - name: Run Clippy static analysis
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  test-and-package:
+    name: Test Suite & Extension Packaging
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            meson \
+            ninja-build \
+            libglib2.0-dev \
+            libglib2.0-bin \
+            gjs \
+            dbus \
+            dbus-x11 \
+            python3 \
+            unzip
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run GNOME Shell Extension GJS Unit Tests
+        run: |
+          echo "Running GJS unit tests..."
+          for test_file in extension/tests/test_*.js; do
+            echo "--> Running $test_file"
+            gjs -m "$test_file"
+          done
+
+      - name: Build Rust workspace
+        run: cargo build --workspace --all-targets
+
+      - name: Run Rust workspace test suite (under ephemeral D-Bus session)
+        run: dbus-run-session -- cargo test --workspace
+
+      - name: Run packaging verification test suite
+        run: python3 tests/packaging/verify_packaging.py
+
+      - name: Build and package GNOME extension for EGO distribution
+        run: |
+          meson setup --prefix=/tmp/watchai-test-prefix build
+          ninja -C build pack-extension
+
+      - name: Run extension package bundle verification
+        run: python3 tests/packaging/test_extension_pack.py
+
+      - name: Upload GNOME Shell Extension artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: watchai-gnome-shell-extension
+          path: build/watchai@gnome.org.shell-extension.zip
+          if-no-files-found: error

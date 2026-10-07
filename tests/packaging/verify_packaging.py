@@ -446,6 +446,18 @@ def run_full_packaging_verification(repo_root: str) -> bool:
                     )
                     return False
 
+        # 7. Ninja pack-extension target verification
+        print(f"Step 7: {ninja_bin} -C {build_dir} pack-extension")
+        res = subprocess.run([ninja_bin, "-C", build_dir, "pack-extension"], capture_output=True, text=True)
+        if res.returncode != 0:
+            sys.stderr.write(f"ninja pack-extension failed:\nSTDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}\n")
+            return False
+
+        ext_zip = os.path.join(build_dir, "watchai@gnome.org.shell-extension.zip")
+        if not os.path.isfile(ext_zip):
+            sys.stderr.write(f"Error: ninja pack-extension did not produce {ext_zip}\n")
+            return False
+
         print("\nAll dynamic packaging checks PASSED successfully!")
         return True
 

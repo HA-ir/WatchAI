@@ -106,6 +106,16 @@ install_data(
 # System-level schema compilation and tracking
 subdir('data')
 
+# 5. GNOME extension packaging target (EGO distribution zip)
+run_target(
+  'pack-extension',
+  command: [
+    files('scripts/pack-extension.sh'),
+    meson.project_source_root(),
+    meson.project_build_root(),
+  ],
+)
+
 gnome.post_install(
   glib_compile_schemas: true,
 )

@@ -12,16 +12,36 @@ pub const MAX_HOOK_STDIN_BYTES: u64 = 64 * 1024;
 ///
 /// Designed to execute in sub-millisecond time and fail open (exit 0) on any error
 /// or missing daemon connection to ensure Claude Code is never blocked or disrupted.
-pub fn run_hook_forwarder() -> Result<(), Box<dyn std::error::Error>> {
-    // 1. Check CLAUDE_PID from environment. If absent or invalid, exit 0 cleanly.
-    let pid_str = match std::env::var("CLAUDE_PID") {
-        Ok(val) => val,
-        Err(_) => return Ok(()),
+pub fn run_hook_forwarder(
+    provider_override: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let provider_id = provider_override.unwrap_or("claude-code").to_string();
+
+    // 1. Resolve PID from provider environment or parent PID
+    let pid: u32 = match provider_id.as_str() {
+        "opencode" => std::env::var("OPENCODE_PID")
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or_else(|| nix::unistd::getppid().as_raw() as u32),
+        "codex-cli" => std::env::var("CODEX_PID")
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or_else(|| nix::unistd::getppid().as_raw() as u32),
+        _ => {
+            let pid_str = match std::env::var("CLAUDE_PID") {
+                Ok(val) => val,
+                Err(_) => return Ok(()),
+            };
+            match pid_str.trim().parse() {
+                Ok(p) if p > 0 => p,
+                _ => return Ok(()),
+            }
+        }
     };
-    let pid: u32 = match pid_str.trim().parse() {
-        Ok(p) if p > 0 => p,
-        _ => return Ok(()),
-    };
+
+    if pid == 0 {
+        return Ok(());
+    }
 
     // 2. Read stdin up to MAX_HOOK_STDIN_BYTES
     let mut stdin_buf = Vec::with_capacity(2048);
@@ -31,13 +51,17 @@ pub fn run_hook_forwarder() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    // 3. Parse JSON from Claude Code hook
+    // 3. Parse JSON from hook input
     let val: serde_json::Value = match serde_json::from_slice(&stdin_buf) {
         Ok(v) => v,
         Err(_) => return Ok(()),
     };
 
-    let hook_event = match val.get("hook_event_name").and_then(|v| v.as_str()) {
+    let hook_event = match val
+        .get("hook_event_name")
+        .or_else(|| val.get("event"))
+        .and_then(|v| v.as_str())
+    {
         Some(e) if !e.is_empty() => e.to_string(),
         _ => return Ok(()),
     };
@@ -54,6 +78,7 @@ pub fn run_hook_forwarder() -> Result<(), Box<dyn std::error::Error>> {
         .or_else(|| std::env::var("PWD").ok());
     let tool_name = val
         .get("tool_name")
+        .or_else(|| val.get("tool"))
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
     let exit_reason = val
@@ -63,6 +88,7 @@ pub fn run_hook_forwarder() -> Result<(), Box<dyn std::error::Error>> {
 
     let payload = ClaudeTelemetryPayload {
         pid,
+        provider_id: Some(provider_id),
         claude_session_id,
         cwd,
         hook_event,
@@ -98,7 +124,7 @@ mod tests {
     #[test]
     fn test_forwarder_returns_ok_when_claude_pid_unset() {
         std::env::remove_var("CLAUDE_PID");
-        assert!(run_hook_forwarder().is_ok());
+        assert!(run_hook_forwarder(None).is_ok());
     }
 
     #[test]
@@ -108,7 +134,7 @@ mod tests {
             "WATCHAI_TELEMETRY_SOCKET",
             "/tmp/non_existent_watchai_socket_12345.sock",
         );
-        assert!(run_hook_forwarder().is_ok());
+        assert!(run_hook_forwarder(None).is_ok());
         std::env::remove_var("CLAUDE_PID");
         std::env::remove_var("WATCHAI_TELEMETRY_SOCKET");
     }
