@@ -48,7 +48,7 @@
 - [x] CHK013 Are permitted state transition edges and rejected transition handling explicitly documented in a state transition matrix? [Completeness, Spec §FR-002, Data Model §2]
   *Evidence*: `LifecycleState::can_transition_to` in `crates/watchai-core/src/state.rs` enforces legal FSM transition edges, tested in `crates/watchai-core/tests/state_machine_tests.rs`.
 - [x] CHK014 Is the post-completion dwell duration for `SUCCESS` and `CANCELLED` states quantified with exact default timeout thresholds? [Measurability, Spec §FR-006, Data Model §2]
-  *Evidence*: `crates/watchai-core/src/session.rs` defines `COMPLETION_DWELL_SECONDS = 10` (matching GSettings `dwell-duration-seconds` default 10). Verified by E2E test in `tests/e2e/scenario2_lifecycle_test.rs`.
+  *Evidence*: `crates/watchai-core/src/aggregate.rs` defines `COMPLETION_DWELL_SECONDS = 60` (matching GSettings `dwell-duration-seconds` default 60). Verified by E2E test in `tests/e2e/scenario2_lifecycle_test.rs`.
 - [x] CHK015 Does the specification define how an agent session transitions when an interrupted task is resumed by the user? [Coverage, Data Model §2]
   *Evidence*: `LifecycleState::can_transition_to` permits transitions from `Cancelled`, `Error`, or `Success` back to `Starting` or `Working`, updating `state_entered_at` and `last_seen_at`.
 
@@ -65,7 +65,7 @@
 - [x] CHK019 Is the sorting order of session cards in the popover menu explicitly specified (e.g., urgency-first, then duration)? [Clarity, Spec §User Story 2]
   *Evidence*: `extension/popover.js` sorts session cards by urgency priority score descending (`ERROR` > `WAITING` > `WORKING` ...), and secondarily by start duration descending.
 - [x] CHK020 Does the specification define how completed/terminal sessions are displayed before retention expiration? [Completeness, Spec §FR-018, Data Model §2]
-  *Evidence*: Terminal sessions dwell in aggregate state for `COMPLETION_DWELL_SECONDS = 10`, are retained in memory for `RETENTION_WINDOW_SECONDS = 60`, and are pruned by `purge_stale_sessions`.
+  *Evidence*: Terminal sessions dwell in aggregate state for `COMPLETION_DWELL_SECONDS = 60`, are retained in memory for `RETENTION_WINDOW_SECONDS = 60`, and are pruned by `prune_retained_sessions`.
 
 ---
 
@@ -191,4 +191,4 @@
 
 - 58 of 59 checklist items have been verified against concrete implementation, architecture, and test suite evidence.
 - CHK040 remains incomplete (`[ ]`) because empirical compositor frame-timing and Mutter latency measurements require live hardware compositor profiling not present in automated headless tests.
-- Invariant confirmation: Task `T022` remains discovery-gated and unchecked `[ ]`.
+- Invariant confirmation: Task `T022` is fully implemented with native Claude Code hook telemetry and verified via automated integration tests.

@@ -52,21 +52,40 @@ sudo pacman -S meson ninja cargo rust glib2 gnome-shell
 
 WatchAI is designed to install into your unprivileged user directory (`$HOME/.local`) without requiring `sudo` or root privileges.
 
-### 1. Configure the Build Directory
+### Quick Install (Recommended)
+
+Run the included local installer to configure, compile, install, reload systemd, and activate the GNOME Shell extension in one command:
+
 ```bash
 git clone https://github.com/HA-ir/WatchAI.git
 cd WatchAI
 
+./install.sh
+```
+
+To test the installation steps beforehand without modifying your system, run:
+```bash
+./install.sh --dry-run
+```
+
+---
+
+### Manual Installation (Advanced)
+
+If you prefer to drive Meson and systemd manually:
+
+#### 1. Configure the Build Directory
+```bash
 meson setup build --prefix=$HOME/.local
 ```
 
-### 2. Compile the Components
+#### 2. Compile the Components
 ```bash
 ninja -C build
 ```
 *Note: Meson orchestrates Cargo behind the scenes to compile the production daemon (`watchai-daemon`) in release mode using an isolated target directory (`<builddir>/cargo-target`), leaving the repository source tree untouched.*
 
-### 3. Install
+#### 3. Install
 ```bash
 ninja -C build install
 ```
@@ -78,28 +97,16 @@ This installs:
 - System GSettings schemas to `$HOME/.local/share/glib-2.0/schemas/`.
 - The systemd user service unit to `$HOME/.local/share/systemd/user/watchai.service`.
 
----
-
-## Starting the Service & Extension
-
-### 1. Reload and Start the Daemon Service
-Reload systemd user units and enable the background daemon service:
+#### 4. Reload and Start the Daemon Service
 ```bash
 systemctl --user daemon-reload
 systemctl --user enable --now watchai.service
 ```
 
-Verify that the daemon is active and running:
-```bash
-systemctl --user status watchai.service
-```
-
-### 2. Enable the GNOME Shell Extension
-Enable the indicator extension in GNOME Shell:
+#### 5. Enable the GNOME Shell Extension
 ```bash
 gnome-extensions enable watchai@gnome.org
 ```
-*(If the extension is not immediately recognized, log out and log back in, or restart GNOME Shell in X11 via `Alt+F2` -> `r`).*
 
 ### 3. Shell `$PATH` Notice (Manual Terminal Execution)
 The `watchai.service` systemd unit executes the daemon using its absolute path (`$HOME/.local/bin/watchai-daemon`) and does **not** depend on your shell `$PATH`.
@@ -117,7 +124,7 @@ WatchAI stores user preferences in GSettings under the schema `org.gnome.shell.e
 
 | Setting Key | Type | Default | Description |
 | :--- | :---: | :---: | :--- |
-| `dwell-duration-seconds` | uint32 | `10` | Extension-exposed completion dwell preference in seconds (range 1–60, default: 10). Note: The background daemon/core remains authoritative for actual lifecycle dwell timing. |
+| `dwell-duration-seconds` | uint32 | `60` | Extension-exposed completion dwell preference in seconds (range 1–60, default: 60). Note: The background daemon/core remains authoritative for actual lifecycle dwell timing. |
 | `enable-desktop-notifications` | boolean | `true` | Master switch to enable or disable desktop notifications for agent lifecycle transitions. |
 | `notify-on-waiting` | boolean | `true` | Dispatch a desktop notification when an agent enters `WAITING` requiring user interaction or approval. |
 | `notify-on-error` | boolean | `true` | Dispatch a desktop notification when an agent enters `ERROR` or crashes. |
@@ -180,20 +187,11 @@ journalctl --user -u watchai.service -f
 
 ### Uninstallation
 
-To cleanly remove all installed files:
+To cleanly remove all installed files, run:
 ```bash
-# Stop and disable the service
-systemctl --user disable --now watchai.service
-
-# Disable extension
-gnome-extensions disable watchai@gnome.org
-
-# Uninstall installed files via Ninja
-ninja -C build uninstall
-
-# Reload systemd
-systemctl --user daemon-reload
+./uninstall.sh
 ```
+*(Alternatively, you can run `./install.sh --uninstall` or `ninja -C build uninstall`).*
 
 ---
 

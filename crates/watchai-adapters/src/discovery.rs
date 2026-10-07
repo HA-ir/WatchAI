@@ -70,6 +70,31 @@ impl ProcessScanner {
         false
     }
 
+    /// Check whether a process is an internal child subagent or headless task runner.
+    pub fn is_child_or_headless_process(proc_path: &Path, args: &[String]) -> bool {
+        // 1. Check command line flags indicative of headless subagents
+        if args
+            .iter()
+            .any(|arg| arg == "--output-format" || arg == "--json-schema" || arg == "--bare")
+        {
+            return true;
+        }
+
+        // 2. Check environ for child session marker
+        let environ_path = proc_path.join("environ");
+        if let Ok(env_bytes) = fs::read(&environ_path) {
+            // Null-delimited environment strings
+            if env_bytes
+                .windows(b"CLAUDE_CODE_CHILD_SESSION=".len())
+                .any(|w| w == b"CLAUDE_CODE_CHILD_SESSION=")
+            {
+                return true;
+            }
+        }
+
+        false
+    }
+
     /// Scan `/proc` for processes matching `binary_name`.
     pub fn scan_processes(
         binary_name: &str,
@@ -155,6 +180,15 @@ impl ProcessScanner {
 
             let args = Self::parse_cmdline_args(&cmdline_bytes);
             if !Self::matches_cmdline_args(&args, target_binaries) {
+                continue;
+            }
+
+            // Exclude internal child subagents (spawned by Claude Code for background reviews / tasks)
+            if Self::is_child_or_headless_process(&proc_path, &args) {
+                debug!(
+                    "Skipping PID {}: detected internal child subagent process",
+                    pid
+                );
                 continue;
             }
 

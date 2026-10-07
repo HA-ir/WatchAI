@@ -104,10 +104,14 @@ export class WatchAISessionCard {
             descParts.push(`active tool ${this.session.activeToolCategory}`);
         }
         const a11yDesc = descParts.join(', ');
-        if (typeof this.actor.get_accessible === 'function') {
-            const acc = this.actor.get_accessible();
-            if (acc && typeof acc.set_description === 'function') {
-                acc.set_description(a11yDesc);
+        if (a11yDesc && typeof this.actor.get_accessible === 'function') {
+            try {
+                const acc = this.actor.get_accessible();
+                if (acc && !(acc instanceof Atk.Action) && typeof acc.set_description === 'function') {
+                    acc.set_description(a11yDesc);
+                }
+            } catch (_) {
+                // Defensive: Ignore GJS ATK interface dispatch conflicts (e.g. Atk.Action signature collision)
             }
         }
     }

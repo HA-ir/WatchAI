@@ -223,7 +223,7 @@ pub enum LifecycleState {
 | `LifecycleState::Starting` | `"STARTING"` | Initializing, bootstrapping, or loading workspace context. |
 | `LifecycleState::Working` | `"WORKING"` | Actively processing, executing tools, or generating responses. |
 | `LifecycleState::Waiting` | `"WAITING"` | Blocked mid-task waiting for human input, confirmation, or permission. |
-| `LifecycleState::Success` | `"SUCCESS"` | Task finished successfully (subject to 10s dwell before settling to Idle). |
+| `LifecycleState::Success` | `"SUCCESS"` | Task finished successfully (subject to 60s dwell before settling to Idle). |
 | `LifecycleState::Error` | `"ERROR"` | Session crashed, failed, or encountered an unhandled error. |
 | `LifecycleState::Cancelled` | `"CANCELLED"` | Active task was cancelled or interrupted by the user (`Ctrl+C`). |
 | `LifecycleState::Unknown` | `"UNKNOWN"` | Liveness unverified or telemetry silence timeout expired. |
@@ -233,13 +233,13 @@ pub enum LifecycleState {
 The state machine strictly validates all transitions in `LifecycleState::can_transition_to`:
 
 - **`Idle`** $\rightarrow$ `Starting`, `Working`, `Unknown`, `Error`
-- **`Starting`** $\rightarrow$ `Working`, `Idle`, `Waiting`, `Error`, `Cancelled`, `Unknown`
-- **`Working`** $\rightarrow$ `Waiting`, `Success`, `Error`, `Cancelled`, `Unknown`
-- **`Waiting`** $\rightarrow$ `Working`, `Cancelled`, `Error`, `Unknown`
-- **`Success`** $\rightarrow$ `Working`, `Idle`, `Cancelled`, `Starting`
-- **`Error`** $\rightarrow$ `Starting`, `Working`, `Idle`
-- **`Cancelled`** $\rightarrow$ `Starting`, `Working`, `Idle`
-- **`Unknown`** $\rightarrow$ `Starting`, `Working`, `Waiting`, `Idle`, `Error`, `Cancelled`
+- **`Starting`** $\rightarrow$ `Working`, `Idle`, `Waiting`, `Error`, `Cancelled`, `Unknown`, `Success`
+- **`Working`** $\rightarrow$ `Waiting`, `Success`, `Error`, `Cancelled`, `Unknown`, `Idle`
+- **`Waiting`** $\rightarrow$ `Working`, `Cancelled`, `Error`, `Unknown`, `Idle`, `Success`
+- **`Success`** $\rightarrow$ `Working`, `Idle`, `Cancelled`, `Starting`, `Error`
+- **`Error`** $\rightarrow$ `Starting`, `Working`, `Idle`, `Success`
+- **`Cancelled`** $\rightarrow$ `Starting`, `Working`, `Idle`, `Success`
+- **`Unknown`** $\rightarrow$ `Starting`, `Working`, `Waiting`, `Idle`, `Error`, `Cancelled`, `Success`
 - **Self-Transitions**: Updating telemetry in the same state (heartbeats) is always permitted.
 
 ### Global Aggregate Priority Ranking
@@ -252,10 +252,58 @@ This ensures that critical blocking states (`ERROR`, `WAITING`) always surface i
 
 ### Completion Dwell & Terminal Retention
 
-- **10-Second Completion Dwell (`COMPLETION_DWELL_SECONDS = 10`)**: When a session finishes in `SUCCESS` or `CANCELLED`, the aggregate state retains this completion status for 10 seconds before settling back to `IDLE` (if no other sessions are active).
-- **Terminal Retention Window (`RETENTION_WINDOW_SECONDS = 60`)**: Terminal sessions (`Success`, `Error`, `Cancelled`) remain visible in memory for 60 seconds before being pruned by `SessionRegistry::purge_stale_sessions`.
+- **60-Second Completion Dwell (`COMPLETION_DWELL_SECONDS = 60`)**: When a session finishes in `SUCCESS`, `ERROR`, or `CANCELLED`, the aggregate state retains this completion status for 60 seconds before settling back to `IDLE` (if no other sessions are active). If user input arrives earlier, the session immediately returns to `WORKING`.
+- **Terminal Retention Window (`RETENTION_WINDOW_SECONDS = 60`)**: Terminated sessions (`is_terminated == true`) remain visible in memory for 60 seconds before being pruned. Live interactive sessions are never pruned and smoothly settle to `IDLE`.
 
 ---
+
+## 5. Claude Code Native Hook Telemetry (T022)
+
+Anthropic's Claude Code CLI (`v2.1.289`+) supports native lifecycle hooks configured in `~/.claude/settings.json`. WatchAI integrates with this hook system via `watchai-daemon hook` to stream live activity telemetry into the core FSM:
+
+### Telemetry Pipeline
+```
+Claude Code (v2.1.289)
+    │ native hook event (stdin JSON, env CLAUDE_PID)
+    ▼
+watchai-daemon hook (ultra-fast CLI forwarder)
+    │ sanitized metadata-only NDJSON line
+    ▼
+$XDG_RUNTIME_DIR/watchai/events.sock (mode 0600)
+    │
+    ▼
+ClaudeCodeAdapter (crates/watchai-adapters)
+    │ PID correlation & FSM mapping
+    ▼
+SessionLifecycleEvent (StateTransition)
+    │
+    ▼
+SessionRegistry → D-Bus → GNOME Shell Extension
+```
+
+### Event to FSM Mapping
+- `UserPromptSubmit` $\rightarrow$ `WORKING`
+- `PreToolUse` $\rightarrow$ `WORKING` (with extracted `ToolCategory`: `Bash` $\rightarrow$ `ShellExecution`, `Edit`/`Write` $\rightarrow$ `FileWrite`, `Read` $\rightarrow$ `FileRead`, `Grep`/`Glob` $\rightarrow$ `Search`, `Agent` $\rightarrow$ `ModelThinking`)
+- `PostToolUse` $\rightarrow$ `WORKING` (tool completed, continuing turn)
+- `PermissionRequest` $\rightarrow$ `WAITING` (blocked awaiting user approval)
+- `PermissionDenied` $\rightarrow$ ignored (subsequent events dictate state)
+- `PostToolUseFailure` $\rightarrow$ `WORKING` (tool failure handled in turn; avoids session poisoning)
+- `Stop` $\rightarrow$ `SUCCESS` (from `WORKING`) or `CANCELLED` (from `WAITING`)
+- `SessionEnd` $\rightarrow$ `SUCCESS` (or `ERROR` if `reason == "error"`)
+- `SessionStart` $\rightarrow$ `IDLE`
+
+### Hook Registration CLI
+```bash
+# Check current hook status in ~/.claude/settings.json
+watchai-daemon status-hooks
+
+# Safely install hooks (creates backup and preserves all existing user hooks)
+watchai-daemon install-hooks
+
+# Safely remove hooks
+watchai-daemon uninstall-hooks
+```
+
 
 ## 5. Streaming Events & Tool Categorization
 

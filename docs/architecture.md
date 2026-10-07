@@ -40,12 +40,12 @@ $$\text{ERROR} (80) > \text{WAITING} (70) > \text{WORKING} (60) > \text{STARTING
 - **Deterministic Tie-Breaking**: When multiple sessions share the highest priority, contextual single-session selection chooses the session with the most recent `state_entered_at` timestamp, broken lexicographically by `session_id`.
 
 ### Decoupled Dwell vs. Retention Lifecycles
-1. **10-Second Aggregate Completion Dwell**:
-   - Completed sessions (`SUCCESS`, `CANCELLED`, `ERROR`) participate in the aggregate priority calculation for exactly 10 seconds after completion.
-   - Once 10 seconds elapse, their effective priority score drops to 0, allowing the top-bar indicator to settle smoothly to `IDLE` (if no other sessions are active).
+1. **60-Second Aggregate Completion Dwell**:
+   - Completed sessions (`SUCCESS`, `CANCELLED`, `ERROR`) participate in the aggregate priority calculation for exactly 60 seconds after completion.
+   - Once 60 seconds elapse, their effective priority score drops to 0, allowing the top-bar indicator to settle smoothly to `IDLE` (if no other sessions are active).
 2. **60-Second Popover Session Retention**:
-   - The session record in memory does **not** mutate to `IDLE`. It remains in `SUCCESS`, `CANCELLED`, or `ERROR` for 60 seconds so the user can inspect the outcome card in the popover menu.
-   - Exactly 60 seconds after terminal entry, the session is purged from the registry and a `SessionRemoved` signal is broadcast.
+   - The session record in memory does **not** prematurely mutate to `IDLE`. Live interactive sessions remain visible and settle to `IDLE` for the next turn, while terminated sessions remain in `SUCCESS`, `CANCELLED`, or `ERROR` for 60 seconds so the user can inspect the outcome card in the popover menu.
+   - Exactly 60 seconds after terminal entry, terminated sessions are purged from the registry and a `SessionRemoved` signal is broadcast.
 
 ## Process Liveness & PID Reuse Defense
 
@@ -159,12 +159,12 @@ WatchAI runs as an unprivileged systemd user service (`systemd/watchai.service`)
 WatchAI integrates with the GNOME desktop configuration system via GSettings (`extension/schemas/org.gnome.shell.extensions.watchai.gschema.xml`):
 - **Schema ID**: `org.gnome.shell.extensions.watchai` under path `/org/gnome/shell/extensions/watchai/`.
 - **Preference Keys**:
-  - `dwell-duration-seconds` (`type="u"`, `<range min="1" max="60"/>`, default `10`): Configured baseline completion dwell expectation.
+  - `dwell-duration-seconds` (`type="u"`, `<range min="1" max="60"/>`, default `60`): Configured baseline completion dwell expectation.
   - `enable-desktop-notifications` (`type="b"`, default `true`): Master switch for desktop notifications.
   - `notify-on-waiting` (`type="b"`, default `true`): Toggles alerts when an agent enters `WAITING` requiring user input or approval.
   - `notify-on-error` (`type="b"`, default `true`): Toggles alerts when an agent enters `ERROR` or crashes.
   - `indicator-icon-style` (`type="s"`, `<choices><choice value="symbolic"/><choice value="colored"/></choices>`, default `'symbolic'`): Visual presentation style of the indicator icon.
-- **Informational Dwell Boundary**: The backend daemon (`watchai-core`) remains the sole authority for lifecycle state transitions and aggregate completion dwell (`COMPLETION_DWELL_SECONDS = 10`). The extension respects daemon-emitted signals directly and does NOT synthesize client-side dwell delays, preventing UI-daemon state divergence.
+- **Informational Dwell Boundary**: The backend daemon (`watchai-core`) remains the sole authority for lifecycle state transitions and aggregate completion dwell (`COMPLETION_DWELL_SECONDS = 60`). The extension respects daemon-emitted signals directly and does NOT synthesize client-side dwell delays, preventing UI-daemon state divergence.
 - **SettingsManager & Headless Fallback**: `SettingsManager` in `extension/settings.js` wraps GNOME 45+ ESM `this.getSettings()`, tracks all `changed::` signal IDs for leak-free disconnection in `disable()`, and provides an in-memory `FallbackSettings` adapter for headless testing when `gschemas.compiled` is unavailable. Invalid icon style strings deterministically fall back to `'symbolic'`.
 
 ### 2. Edge-Triggered Desktop Notifications & 5.0-Second Cooldown

@@ -73,21 +73,38 @@ impl LifecycleState {
                     | Self::Error
                     | Self::Cancelled
                     | Self::Unknown
+                    | Self::Success
             ),
             Self::Working => matches!(
                 target,
-                Self::Waiting | Self::Success | Self::Error | Self::Cancelled | Self::Unknown
+                Self::Waiting
+                    | Self::Success
+                    | Self::Error
+                    | Self::Cancelled
+                    | Self::Unknown
+                    | Self::Idle
             ),
             Self::Waiting => matches!(
                 target,
-                Self::Working | Self::Cancelled | Self::Error | Self::Unknown
+                Self::Working
+                    | Self::Cancelled
+                    | Self::Error
+                    | Self::Unknown
+                    | Self::Idle
+                    | Self::Success
             ),
             Self::Success => matches!(
                 target,
-                Self::Working | Self::Idle | Self::Cancelled | Self::Starting
+                Self::Working | Self::Idle | Self::Cancelled | Self::Starting | Self::Error
             ),
-            Self::Error => matches!(target, Self::Starting | Self::Working | Self::Idle),
-            Self::Cancelled => matches!(target, Self::Starting | Self::Working | Self::Idle),
+            Self::Error => matches!(
+                target,
+                Self::Starting | Self::Working | Self::Idle | Self::Success
+            ),
+            Self::Cancelled => matches!(
+                target,
+                Self::Starting | Self::Working | Self::Idle | Self::Success
+            ),
             Self::Unknown => matches!(
                 target,
                 Self::Starting
@@ -96,6 +113,7 @@ impl LifecycleState {
                     | Self::Idle
                     | Self::Error
                     | Self::Cancelled
+                    | Self::Success
             ),
         }
     }

@@ -100,7 +100,7 @@ async fn test_quickstart_scenario_2_dwell_vs_retention() {
     let registry = SessionRegistry::new();
     let base_time = Utc::now();
 
-    // S1 finishes task and transitions to SUCCESS
+    // S1 finishes task and transitions to SUCCESS (terminated session)
     let mut s1 = AgentSession::new(
         "S1".to_string(),
         "claude-code",
@@ -110,34 +110,34 @@ async fn test_quickstart_scenario_2_dwell_vs_retention() {
         LifecycleState::Success,
         AdapterStatus::Active,
     );
+    s1.is_terminated = true;
     s1.state_entered_at = base_time;
     registry.upsert(s1.clone()).await;
 
-    // At T = 5s: inside dwell window (5s <= 10s)
-    let t_5s = base_time + Duration::seconds(5);
-    let calc_5s = compute_aggregate_state(&registry.list().await, t_5s);
-    assert_eq!(calc_5s.aggregate_state, LifecycleState::Success);
-    assert_eq!(calc_5s.active_session_count, 1);
-    assert!(!is_retention_expired(&s1, t_5s));
+    // At T = 30s: inside dwell window (30s <= 60s)
+    let t_30s = base_time + Duration::seconds(30);
+    let calc_30s = compute_aggregate_state(&registry.list().await, t_30s);
+    assert_eq!(calc_30s.aggregate_state, LifecycleState::Success);
+    assert_eq!(calc_30s.active_session_count, 1);
+    assert!(!is_retention_expired(&s1, t_30s));
 
-    // At T = 12s: 10-second dwell expired!
-    let t_12s = base_time + Duration::seconds(12);
-    let calc_12s = compute_aggregate_state(&registry.list().await, t_12s);
+    // At T = 61s: 60-second dwell expired, aggregate state settles to IDLE!
+    let t_61s = base_time + Duration::seconds(61);
+    let calc_61s = compute_aggregate_state(&registry.list().await, t_61s);
     assert_eq!(
-        calc_12s.aggregate_state,
+        calc_61s.aggregate_state,
         LifecycleState::Idle,
-        "Top-bar aggregate state must settle to IDLE after 10s"
+        "Top-bar aggregate state must settle to IDLE after 60s"
     );
-    assert_eq!(calc_12s.active_session_count, 0);
+    assert_eq!(calc_61s.active_session_count, 0);
 
-    // But S1 is STILL in registry and STILL in SUCCESS!
-    let session_12s = registry.get("S1").await.unwrap();
-    assert_eq!(session_12s.current_state, LifecycleState::Success);
-    assert!(!is_retention_expired(&session_12s, t_12s));
+    // But before pruning runs, S1 is STILL in registry and STILL in SUCCESS!
+    let session_61s = registry.get("S1").await.unwrap();
+    assert_eq!(session_61s.current_state, LifecycleState::Success);
 
-    // At T = 65s: 60-second retention expired!
-    let t_65s = base_time + Duration::seconds(65);
-    let pruned = prune_retained_sessions(&registry, t_65s).await;
+    // 60-second retention expired for terminated session -> pruned!
+    assert!(is_retention_expired(&session_61s, t_61s));
+    let pruned = prune_retained_sessions(&registry, t_61s).await;
     assert_eq!(pruned, vec!["S1".to_string()]);
     assert!(registry.get("S1").await.is_none());
 }

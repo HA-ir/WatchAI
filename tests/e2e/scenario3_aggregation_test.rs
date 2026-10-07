@@ -133,9 +133,9 @@ async fn test_scenario3_multi_session_priority_and_tie_breaking() {
     assert_eq!(active_term, 3, "All 3 sessions are dwelling");
     assert_eq!(error_term, 2, "Two sessions in error");
 
-    // 5. Verify completion dwell smooth reset to IDLE after all terminal states expire (10s)
+    // 5. Verify completion dwell smooth reset to IDLE after all terminal states expire (60s)
     let dwell_start = Instant::now();
-    let poll_deadline = Duration::from_secs(14);
+    let poll_deadline = Duration::from_secs(66);
     let mut idle_reached = false;
 
     while dwell_start.elapsed() < poll_deadline {
@@ -143,8 +143,8 @@ async fn test_scenario3_multi_session_priority_and_tie_breaking() {
         if s == "IDLE" {
             let elapsed = dwell_start.elapsed();
             assert!(
-                elapsed >= Duration::from_millis(9800),
-                "Dwell expired prematurely: elapsed {:?} < 9.8s",
+                elapsed >= Duration::from_millis(59800),
+                "Dwell expired prematurely: elapsed {:?} < 59.8s",
                 elapsed
             );
             assert_eq!(a, 0, "Active session count must be 0 in IDLE");
@@ -156,6 +156,6 @@ async fn test_scenario3_multi_session_priority_and_tie_breaking() {
 
     assert!(
         idle_reached,
-        "Multi-session dwell failed to reset to IDLE within 14.0s"
+        "Multi-session dwell failed to reset to IDLE within 66.0s"
     );
 }

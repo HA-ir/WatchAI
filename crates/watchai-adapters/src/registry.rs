@@ -8,6 +8,7 @@ use std::sync::Arc;
 #[derive(Default, Clone)]
 pub struct AdapterRegistry {
     adapters: Vec<Arc<dyn ProviderAdapter>>,
+    claude_adapter: Option<Arc<ClaudeCodeAdapter>>,
     event_sink: Option<EventSink>,
 }
 
@@ -15,6 +16,7 @@ impl AdapterRegistry {
     pub fn new() -> Self {
         Self {
             adapters: Vec::new(),
+            claude_adapter: None,
             event_sink: None,
         }
     }
@@ -30,10 +32,17 @@ impl AdapterRegistry {
     /// Construct a registry pre-populated with default built-in adapters.
     pub fn default_registry() -> Self {
         let mut reg = Self::new();
-        reg.register(Arc::new(ClaudeCodeAdapter::new()));
+        let claude = Arc::new(ClaudeCodeAdapter::new());
+        reg.claude_adapter = Some(claude.clone());
+        reg.register(claude);
         reg.register(Arc::new(CodexCliAdapter::new()));
         reg.register(Arc::new(OpenCodeAdapter::new()));
         reg
+    }
+
+    /// Retrieve the typed ClaudeCodeAdapter reference if registered.
+    pub fn claude_adapter(&self) -> Option<Arc<ClaudeCodeAdapter>> {
+        self.claude_adapter.clone()
     }
 
     /// Attach an EventSink handle to all registered adapters.

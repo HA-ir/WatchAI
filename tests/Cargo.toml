@@ -52,3 +52,7 @@ path = "e2e/scenario3_aggregation_test.rs"
 [[test]]
 name = "scenario4_crash_test"
 path = "e2e/scenario4_crash_test.rs"
+
+[[test]]
+name = "claude_telemetry_tests"
+path = "claude_telemetry_tests.rs"

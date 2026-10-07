@@ -37,7 +37,7 @@ WatchAI provides an isolated, deterministic, and 100% headless End-to-End (E2E) 
 2. **Bounded Socket Ingestion**: The Unix-domain stream listener enforces a strict **64 KiB line limit** to protect against unbounded memory allocation. Malformed JSON frames are safely logged and discarded without interrupting stream processing.
 3. **Full D-Bus Isolation**: Every test scenario spawns its own ephemeral `dbus-daemon --session --print-address --nofork` instance, guaranteeing zero interference with the host desktop bus.
 4. **Leak-Proof Child Cleanup (`ChildGuard`)**: All child processes (`watchai-daemon`, `dbus-daemon`, mock workers) are managed via Linux process groups (`setpgid(0, 0)`). RAII `Drop` sends `SIGTERM` followed by bounded `SIGKILL` and reaps child processes via `wait()`.
-5. **Authentic 10-Second Completion Dwell**: Scenario 2 evaluates the authentic, unmodified production 10-second completion dwell window (`COMPLETION_DWELL_SECONDS = 10`) via bounded polling without artificial test overrides.
+5. **Authentic 60-Second Completion Dwell**: Scenario 2 evaluates the authentic, unmodified production 60-second completion dwell window (`COMPLETION_DWELL_SECONDS = 60`) via bounded polling without artificial test overrides.
 6. **Zero-Leakage Privacy**: Mock events and assertions strictly adhere to the metadata-only boundary. No prompts, diffs, tool parameters, or credentials enter the mock protocol.
 7. **Test-Scoped `/proc` Isolation (`WATCHAI_PROC_ROOT`)**: For isolated E2E test runs, `WATCHAI_PROC_ROOT` may be configured by test fixtures to point the daemon's discovery scanner and liveness reader to an isolated directory, preventing active host AI coding agent processes from contaminating test runs. When unset or empty (normal production and systemd user execution), the daemon operates exclusively against standard Linux `/proc` without configuration changes.
 
@@ -124,7 +124,7 @@ cargo test -p watchai-integration-tests --test 'scenario*'
 # Scenario 1: Daemon bootstrap, readiness, D-Bus name claim within 2.0s, clean SIGTERM shutdown
 cargo test -p watchai-integration-tests --test scenario1_startup_test
 
-# Scenario 2: Complete lifecycle progression and authentic 10-second completion dwell
+# Scenario 2: Complete lifecycle progression and authentic 60-second completion dwell
 cargo test -p watchai-integration-tests --test scenario2_lifecycle_test
 
 # Scenario 3: Multi-session priority aggregation (ERROR > WAITING > WORKING) and recency tie-breaking

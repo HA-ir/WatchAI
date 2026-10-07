@@ -108,7 +108,16 @@ fn test_provider_capability_descriptors() {
     let codex = CodexCliAdapter::new();
     let opencode = OpenCodeAdapter::new();
 
-    for adapter in [&claude as &dyn ProviderAdapter, &codex, &opencode] {
+    let claude_caps = claude.capabilities();
+    assert_eq!(
+        claude_caps.telemetry_tier,
+        TelemetryTier::OptInHookTelemetry,
+        "ClaudeCodeAdapter must declare OptInHookTelemetry"
+    );
+    assert!(claude_caps.supports_tool_categories);
+    assert!(claude_caps.supports_activity_events);
+
+    for adapter in [&codex as &dyn ProviderAdapter, &opencode] {
         let caps = adapter.capabilities();
         assert_eq!(
             caps.telemetry_tier,

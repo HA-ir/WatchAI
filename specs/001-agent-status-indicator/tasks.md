@@ -71,7 +71,7 @@ description: "Actionable implementation task breakdown for WatchAI Baseline Agen
 - [x] T019 [US1] Implement `ProviderAdapter` trait and `AdapterStatus` enum in `crates/watchai-adapters/src/traits.rs`.
 - [x] T020 [US1] Implement baseline process scanner inspecting `/proc/[pid]/cmdline` and `/proc/[pid]/cwd` with deterministic session key derivation from `(PID, process_start_time, cwd)` in `crates/watchai-adapters/src/discovery.rs`.
 - [x] T021 [US1] Implement Claude Code baseline process detection and workspace resolution in `crates/watchai-adapters/src/claude_code.rs`.
-- [ ] T022 [US1] Implement Claude Code opt-in hook event telemetry receiver in `crates/watchai-adapters/src/claude_code.rs`.
+- [x] T022 [US1] Implement Claude Code opt-in hook event telemetry receiver in `crates/watchai-adapters/src/claude_code.rs`.
 - [x] T023 [US1] Implement minimal central daemon orchestrator initializing adapters, session registry, and D-Bus server in `crates/watchai-daemon/src/main.rs`.
 - [x] T024 [US1] Implement asynchronous D-Bus client proxy wrapper (`Gio.DBusProxy`) in `extension/dbus_client.js`.
 - [x] T025 [US1] Implement GNOME Shell top-bar indicator button (`PanelMenu.Button`) rendering symbolic icons for all 8 states in `extension/indicator.js`.
@@ -112,15 +112,15 @@ description: "Actionable implementation task breakdown for WatchAI Baseline Agen
 **Independent Test**: Simultaneously run conflicting sessions (e.g. Session 1 `WORKING` and Session 2 `WAITING`) and confirm the top-bar indicator deterministically displays `WAITING`.
 
 ### Tests for User Story 3
-- [ ] T037 [P] [US3] Write property-based unit tests for all permutations of multi-session state aggregation in `crates/watchai-core/tests/aggregation_tests.rs`.
-- [ ] T038 [P] [US3] Write integration test verifying 10-second dwell time for `SUCCESS` and `CANCELLED` states before settling to `IDLE` in `crates/watchai-core/tests/dwell_time_tests.rs`.
+- [x] T037 [P] [US3] Write property-based unit tests for all permutations of multi-session state aggregation in `crates/watchai-core/tests/aggregation_tests.rs`.
+- [x] T038 [P] [US3] Write integration test verifying 10-second dwell time for `SUCCESS` and `CANCELLED` states before settling to `IDLE` in `crates/watchai-core/tests/dwell_time_tests.rs`.
 
 ### Implementation for User Story 3
-- [ ] T039 [US3] Implement priority aggregation algorithm ($\text{ERROR} > \text{WAITING} > \text{WORKING} > \dots$) in `crates/watchai-core/src/aggregate.rs`.
-- [ ] T040 [US3] Implement session disambiguation logic supporting multiple concurrent sessions from the same provider across different or identical projects in `crates/watchai-core/src/session.rs`.
-- [ ] T041 [US3] Implement asynchronous dwell timer task (default: 10s) transitioning completed sessions to `IDLE` in `crates/watchai-core/src/aggregate.rs`.
-- [ ] T042 [US3] Implement retention pruning task (default: 60s) removing terminal sessions from memory and emitting `SessionRemoved` in `crates/watchai-core/src/session.rs`.
-- [ ] T043 [US3] Update GNOME Shell top-bar indicator to display active session count badge when multiple sessions run in `extension/indicator.js`.
+- [x] T039 [US3] Implement priority aggregation algorithm ($\text{ERROR} > \text{WAITING} > \text{WORKING} > \dots$) in `crates/watchai-core/src/aggregate.rs`.
+- [x] T040 [US3] Implement session disambiguation logic supporting multiple concurrent sessions from the same provider across different or identical projects in `crates/watchai-core/src/session.rs`.
+- [x] T041 [US3] Implement asynchronous dwell timer task (default: 10s) transitioning completed sessions to `IDLE` in `crates/watchai-core/src/aggregate.rs`.
+- [x] T042 [US3] Implement retention pruning task (default: 60s) removing terminal sessions from memory and emitting `SessionRemoved` in `crates/watchai-core/src/session.rs`.
+- [x] T043 [US3] Update GNOME Shell top-bar indicator to display active session count badge when multiple sessions run in `extension/indicator.js`.
 
 **Checkpoint**: User Story 3 complete; multi-session conflict resolution operates deterministically.
 
@@ -133,16 +133,16 @@ description: "Actionable implementation task breakdown for WatchAI Baseline Agen
 **Independent Test**: Kill an active agent process (`kill -9`) and verify status transitions to `ERROR` within 5 seconds; restart the daemon and verify GNOME extension auto-reconnects with exponential backoff.
 
 ### Tests for User Story 4
-- [ ] T044 [P] [US4] Write integration test simulating abrupt agent process exit (`kill -9`) and asserting 5-second crash transition in `tests/process_crash_recovery_test.rs`.
-- [ ] T045 [P] [US4] Write integration test for daemon restart and GNOME Shell proxy re-acquisition in `extension/tests/test_reconnect.js`.
+- [x] T044 [P] [US4] Write integration test simulating abrupt agent process exit (`kill -9`) and asserting 5-second crash transition in `tests/process_crash_recovery_test.rs`.
+- [x] T045 [P] [US4] Write integration test for daemon restart and GNOME Shell proxy re-acquisition in `extension/tests/test_reconnect.js`.
 
 ### Implementation for User Story 4
-- [ ] T046 [US4] Implement periodic `/proc/[pid]` process existence checker (every 2 seconds) in `crates/watchai-core/src/liveness.rs`.
-- [ ] T047 [US4] Implement adaptive silence timeout monitor (5 min for `WORKING`, 1 min for `STARTING` when PID is unavailable) in `crates/watchai-core/src/liveness.rs`.
-- [ ] T048 [US4] Implement crash detection handler transitioning abruptly killed processes to `ERROR` within 5 seconds in `crates/watchai-core/src/liveness.rs`.
-- [ ] T049 [US4] Implement D-Bus `NameOwnerChanged` signal watcher in GNOME extension to transition UI to offline state when daemon terminates in `extension/dbus_client.js`.
-- [ ] T050 [US4] Implement exponential backoff reconnection loop in GNOME extension when daemon restarts in `extension/dbus_client.js`.
-- [ ] T051 [US4] Ensure strict cleanup of all GJS timers, signal handlers, and D-Bus proxy references in `disable()` in `extension/extension.js`.
+- [x] T046 [US4] Implement periodic `/proc/[pid]` process existence checker (every 2 seconds) in `crates/watchai-core/src/liveness.rs`.
+- [x] T047 [US4] Implement adaptive silence timeout monitor (5 min for `WORKING`, 1 min for `STARTING` when PID is unavailable) in `crates/watchai-core/src/liveness.rs`.
+- [x] T048 [US4] Implement crash detection handler transitioning abruptly killed processes to `ERROR` within 5 seconds in `crates/watchai-core/src/liveness.rs`.
+- [x] T049 [US4] Implement D-Bus `NameOwnerChanged` signal watcher in GNOME extension to transition UI to offline state when daemon terminates in `extension/dbus_client.js`.
+- [x] T050 [US4] Implement exponential backoff reconnection loop in GNOME extension when daemon restarts in `extension/dbus_client.js`.
+- [x] T051 [US4] Ensure strict cleanup of all GJS timers, signal handlers, and D-Bus proxy references in `disable()` in `extension/extension.js`.
 
 **Checkpoint**: User Story 4 complete; system is hardened against process crashes and service restarts.
 
@@ -152,12 +152,12 @@ description: "Actionable implementation task breakdown for WatchAI Baseline Agen
 
 **Purpose**: Implement OpenAI Codex CLI and OpenCode adapters following the Tiered Discovery Model with explicit discovery validation spikes and centralized `AdapterRegistry`.
 
-- [ ] T052 [P] Conduct discovery spike to audit OpenAI Codex CLI process signatures, CLI flags, and potential telemetry channels, documenting findings in `docs/discovery/codex-cli.md`.
-- [ ] T053 Implement OpenAI Codex CLI adapter (`codex-cli`) with `/proc` process detection and fallback `DISCOVERY_REQUIRED` badge in `crates/watchai-adapters/src/codex_cli.rs`.
-- [ ] T054 [P] Conduct discovery spike to audit OpenCode binary execution and event hooks, documenting findings in `docs/discovery/opencode.md`.
-- [ ] T055 Implement OpenCode adapter (`opencode`) with `/proc` process detection and fallback `DISCOVERY_REQUIRED` badge in `crates/watchai-adapters/src/opencode.rs`.
-- [ ] T056 [P] Write unit tests for Codex CLI and OpenCode adapter event normalization in `crates/watchai-adapters/tests/adapter_normalization_tests.rs`.
-- [ ] T057 Implement `AdapterRegistry` in `crates/watchai-adapters/src/registry.rs` and wire into daemon discovery engine in `crates/watchai-daemon/src/main.rs`.
+- [x] T052 [P] Conduct discovery spike to audit OpenAI Codex CLI process signatures, CLI flags, and potential telemetry channels, documenting findings in `docs/discovery/codex-cli.md`.
+- [x] T053 Implement OpenAI Codex CLI adapter (`codex-cli`) with `/proc` process detection and fallback `DISCOVERY_REQUIRED` badge in `crates/watchai-adapters/src/codex_cli.rs`.
+- [x] T054 [P] Conduct discovery spike to audit OpenCode binary execution and event hooks, documenting findings in `docs/discovery/opencode.md`.
+- [x] T055 Implement OpenCode adapter (`opencode`) with `/proc` process detection and fallback `DISCOVERY_REQUIRED` badge in `crates/watchai-adapters/src/opencode.rs`.
+- [x] T056 [P] Write unit tests for Codex CLI and OpenCode adapter event normalization in `crates/watchai-adapters/tests/adapter_normalization_tests.rs`.
+- [x] T057 Implement `AdapterRegistry` in `crates/watchai-adapters/src/registry.rs` and wire into daemon discovery engine in `crates/watchai-daemon/src/main.rs`.
 
 ---
 

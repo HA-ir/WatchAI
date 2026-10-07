@@ -1262,6 +1262,7 @@ name = "watchai-daemon"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "nix",
  "serde",
  "serde_json",
  "tokio",

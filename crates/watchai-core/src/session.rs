@@ -85,6 +85,9 @@ pub struct AgentSession {
     /// Used to implement hysteresis before declaring an ungraceful crash (Phase 6).
     #[serde(skip)]
     pub consecutive_proc_failures: u32,
+    /// Whether the session process has permanently terminated.
+    #[serde(skip)]
+    pub is_terminated: bool,
 }
 
 impl AgentSession {
@@ -123,6 +126,7 @@ impl AgentSession {
             adapter_status,
             process_start_time: None,
             consecutive_proc_failures: 0,
+            is_terminated: false,
         }
     }
 
@@ -203,7 +207,7 @@ impl AgentSession {
     /// Validates FSM transition legality, verifies timestamp monotonicity against `last_seen_at`,
     /// preserves terminal state immunity, increments the internal monotonic sequence number, and updates activity timestamps.
     pub fn apply_lifecycle_event(&mut self, event: &SessionLifecycleEvent) -> Result<(), String> {
-        if self.current_state.is_terminal() {
+        if self.is_terminated {
             return Err(format!(
                 "Rejected event: session is already in terminal state {}",
                 self.current_state
@@ -247,6 +251,7 @@ impl AgentSession {
                         timestamp, self.last_seen_at
                     ));
                 }
+                self.is_terminated = true;
                 let target = match exit_code {
                     Some(0) => LifecycleState::Success,
                     Some(_) => LifecycleState::Error,

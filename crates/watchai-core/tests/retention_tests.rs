@@ -87,8 +87,8 @@ async fn test_terminal_retention_pruning_sixty_seconds() {
     let registry = SessionRegistry::new();
     let now = Utc::now();
 
-    // 1. Session in SUCCESS entered 30 seconds ago:
-    // Past 10s completion dwell, but within 60s retention -> retained!
+    // 1. Terminated session in SUCCESS entered 30 seconds ago:
+    // Within 60s retention -> retained!
     let mut s_retained = AgentSession::new(
         "sess-retained".to_string(),
         "claude-code",
@@ -98,11 +98,12 @@ async fn test_terminal_retention_pruning_sixty_seconds() {
         LifecycleState::Success,
         AdapterStatus::Active,
     );
+    s_retained.is_terminated = true;
     s_retained.state_entered_at = now - Duration::seconds(30);
     assert!(!is_retention_expired(&s_retained, now));
     registry.upsert(s_retained).await;
 
-    // 2. Session in ERROR entered 65 seconds ago -> retention expired!
+    // 2. Terminated session in ERROR entered 65 seconds ago -> retention expired!
     let mut s_expired_err = AgentSession::new(
         "sess-expired-err".to_string(),
         "claude-code",
@@ -112,6 +113,7 @@ async fn test_terminal_retention_pruning_sixty_seconds() {
         LifecycleState::Error,
         AdapterStatus::Active,
     );
+    s_expired_err.is_terminated = true;
     s_expired_err.state_entered_at = now - Duration::seconds(65);
     assert!(is_retention_expired(&s_expired_err, now));
     registry.upsert(s_expired_err).await;
@@ -149,6 +151,32 @@ async fn test_terminal_retention_pruning_sixty_seconds() {
     );
     // Working session is still in memory
     assert!(registry.get("sess-working").await.is_some());
+}
+
+#[tokio::test]
+async fn test_live_session_in_terminal_state_never_pruned() {
+    let registry = SessionRegistry::new();
+    let now = Utc::now();
+
+    // A live interactive session (process running, is_terminated = false)
+    // in Success entered 120 seconds ago -> must NOT be retention expired
+    let mut s_live = AgentSession::new(
+        "sess-live".to_string(),
+        "claude-code",
+        "Claude Code",
+        "/home/user/project",
+        Some(1234),
+        LifecycleState::Success,
+        AdapterStatus::Active,
+    );
+    s_live.is_terminated = false;
+    s_live.state_entered_at = now - Duration::seconds(120);
+    assert!(!is_retention_expired(&s_live, now));
+    registry.upsert(s_live).await;
+
+    let pruned = prune_retained_sessions(&registry, now).await;
+    assert!(pruned.is_empty());
+    assert!(registry.get("sess-live").await.is_some());
 }
 
 struct TestProcReader {

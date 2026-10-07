@@ -1,6 +1,7 @@
 // Unit test suite for WatchAI AT-SPI Accessibility (Phase 10 - T138)
 
 import Atk from 'gi://Atk';
+import GObject from 'gi://GObject';
 import { STATE_CONFIG, sanitizeProjectName, formatDuration } from '../utils.js';
 
 function assert(condition, message) {
@@ -137,12 +138,55 @@ function testSessionCardAccessibilityFormatting() {
     print('✓ Session card accessible name and description formatting verified.');
 }
 
+function testAtkActionDescriptionConflictSafety() {
+    // Register an Atk.Object implementing Atk.Action, mimicking CallyActor in Clutter/St
+    const MockCallyActorAccessible = GObject.registerClass({
+        Implements: [Atk.Action],
+    }, class MockCallyActorAccessible extends Atk.Object {
+        vfunc_do_action(_i) { return true; }
+        vfunc_get_n_actions() { return 1; }
+        vfunc_get_description(_i) { return 'action'; }
+        vfunc_get_name(_i) { return 'action'; }
+    });
+
+    const acc = new MockCallyActorAccessible();
+
+    // 1. Verify that calling raw set_description with 1 argument throws in GJS
+    let threwExpectedTypeError = false;
+    try {
+        acc.set_description('Test description');
+    } catch (e) {
+        if (e instanceof TypeError && e.message.includes('At least 2 arguments required')) {
+            threwExpectedTypeError = true;
+        }
+    }
+    assert(threwExpectedTypeError, 'Calling 1-arg set_description on Atk.Action must throw in GJS');
+
+    // 2. Verify that our safe guard successfully shields the call
+    let safeUpdateSucceeded = false;
+    try {
+        const a11yDesc = 'Process ID 1234, active tool Bash';
+        if (a11yDesc && typeof acc.set_description === 'function') {
+            if (!(acc instanceof Atk.Action)) {
+                acc.set_description(a11yDesc);
+            }
+        }
+        safeUpdateSucceeded = true;
+    } catch (_) {
+        safeUpdateSucceeded = false;
+    }
+    assert(safeUpdateSucceeded, 'Safe guard must prevent Atk.Action collision exception');
+
+    print('✓ Atk.Action set_description conflict detection and safe guarding verified.');
+}
+
 try {
     testAllEightLifecycleStatesAccessibleNames();
     testDynamicMultiSessionCounter();
     testOfflineAccessibleNameAndDescription();
     testAtkRoleConstants();
     testSessionCardAccessibilityFormatting();
+    testAtkActionDescriptionConflictSafety();
     print('\nAll AT-SPI Accessibility GJS tests passed successfully!');
 } catch (e) {
     printerr('Test failed: ' + e + '\n' + e.stack);

@@ -5,8 +5,8 @@ use harness::E2eTestFixture;
 use std::time::{Duration, Instant};
 
 #[tokio::test]
-async fn test_scenario2_mock_session_lifecycle_and_ten_second_dwell() {
-    // T161 / Scenario 2: Complete lifecycle progression and authentic 10-second completion dwell
+async fn test_scenario2_mock_session_lifecycle_and_sixty_second_dwell() {
+    // T161 / Scenario 2: Complete lifecycle progression and authentic 60-second completion dwell
     let fixture = E2eTestFixture::start()
         .await
         .expect("E2E fixture startup must succeed");
@@ -185,23 +185,23 @@ async fn test_scenario2_mock_session_lifecycle_and_ten_second_dwell() {
     let agg_args4 = agg4.args().unwrap();
     assert_eq!(agg_args4.state, "SUCCESS");
 
-    // 6. Evaluate real 10-second completion dwell window without artificial test overrides
+    // 6. Evaluate real 60-second completion dwell window without artificial test overrides
     let dwell_start = Instant::now();
     let mut transitioned_to_idle = false;
-    let poll_deadline = Duration::from_secs(14); // 10s dwell + 4s timing tolerance margin
+    let poll_deadline = Duration::from_secs(66); // 60s dwell + 6s timing tolerance margin
 
     while dwell_start.elapsed() < poll_deadline {
         let (state, active, _, _, _) = proxy.get_aggregate_state().await.unwrap();
         if state == "IDLE" {
             let elapsed = dwell_start.elapsed();
             assert!(
-                elapsed >= Duration::from_millis(9800),
-                "Dwell expired prematurely: elapsed {:?} < 9.8s",
+                elapsed >= Duration::from_millis(59800),
+                "Dwell expired prematurely: elapsed {:?} < 59.8s",
                 elapsed
             );
             assert!(
-                elapsed <= Duration::from_millis(13000),
-                "Dwell expired too late: elapsed {:?} > 13.0s",
+                elapsed <= Duration::from_millis(66000),
+                "Dwell expired too late: elapsed {:?} > 66.0s",
                 elapsed
             );
             assert_eq!(active, 0, "Active session count must be 0 in IDLE");
@@ -213,6 +213,6 @@ async fn test_scenario2_mock_session_lifecycle_and_ten_second_dwell() {
 
     assert!(
         transitioned_to_idle,
-        "Aggregate state failed to reset smoothly to IDLE within 14.0s dwell window"
+        "Aggregate state failed to reset smoothly to IDLE within 66.0s dwell window"
     );
 }
