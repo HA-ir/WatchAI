@@ -220,6 +220,13 @@ async fn run_daemon() -> Result<(), Box<dyn std::error::Error>> {
     startup_discovered.sort_by(|a, b| a.deterministic_cmp(b));
 
     for d in startup_discovered {
+        let existing = registry.list().await;
+        if existing.iter().any(|s| {
+            s.session_id == d.session_id || (s.process_id == d.process_id && !s.is_terminated)
+        }) {
+            continue;
+        }
+
         info!(
             "Discovered surviving session on startup: provider={}, id={}",
             d.provider_id, d.session_id
@@ -456,45 +463,52 @@ async fn run_daemon() -> Result<(), Box<dyn std::error::Error>> {
                     discovered.sort_by(|a, b| a.deterministic_cmp(b));
 
                     for d in discovered {
-                        if bg_registry.get(&d.session_id).await.is_none() {
-                            info!(
-                                "Discovered new session: provider={}, id={}",
-                                d.provider_id, d.session_id
-                            );
-                            let mut session = AgentSession::new(
-                                d.session_id.clone(),
-                                d.provider_id.clone(),
-                                d.provider_display_name.clone(),
-                                &d.project_path,
-                                d.process_id,
-                                d.initial_state,
-                                d.adapter_status,
-                            );
-                            if let Some(st) = d.process_start_time {
-                                session = session.with_process_start_time(Some(st));
-                            }
-                            bg_registry.upsert(session.clone()).await;
+                        let existing = bg_registry.list().await;
+                        if existing.iter().any(|s| {
+                            s.session_id == d.session_id
+                                || (s.process_id == d.process_id && !s.is_terminated)
+                        }) {
+                            continue;
+                        }
 
-                            let dto = SessionDto::from(&session);
-                            if let Err(e) =
-                                WatchAiDbusService::emit_session_added(bg_iface.signal_context(), &dto)
-                                    .await
-                            {
-                                if rate_limiter.should_log("session_added_signal_err") {
-                                    warn!("Failed to emit SessionAdded signal (rate-limited): {}", e);
-                                }
+                        info!(
+                            "Discovered new session: provider={}, id={}",
+                            d.provider_id, d.session_id
+                        );
+                        let mut session = AgentSession::new(
+                            d.session_id.clone(),
+                            d.provider_id.clone(),
+                            d.provider_display_name.clone(),
+                            &d.project_path,
+                            d.process_id,
+                            d.initial_state,
+                            d.adapter_status,
+                        );
+                        if let Some(st) = d.process_start_time {
+                            session = session.with_process_start_time(Some(st));
+                        }
+                        bg_registry.upsert(session.clone()).await;
+
+                        let dto = SessionDto::from(&session);
+                        if let Err(e) =
+                            WatchAiDbusService::emit_session_added(bg_iface.signal_context(), &dto)
+                                .await
+                        {
+                            if rate_limiter.should_log("session_added_signal_err") {
+                                warn!("Failed to emit SessionAdded signal (rate-limited): {}", e);
                             }
                         }
                     }
 
                     // D. Settle live dwelling sessions: If an interactive session entered
-                    // Success or Error but is NOT permanently terminated (process alive),
+                    // Success, Error, Cancelled, or Unknown but is NOT permanently terminated (process alive),
                     // smoothly settle it to Idle after COMPLETION_DWELL_SECONDS elapses.
                     for mut s in bg_registry.list().await {
                         if !s.is_terminated
                             && (s.current_state == LifecycleState::Success
                                 || s.current_state == LifecycleState::Error
-                                || s.current_state == LifecycleState::Cancelled)
+                                || s.current_state == LifecycleState::Cancelled
+                                || s.current_state == LifecycleState::Unknown)
                             && (now - s.state_entered_at).num_seconds()
                                 >= watchai_core::aggregate::COMPLETION_DWELL_SECONDS
                             && s.transition_to(LifecycleState::Idle, s.sequence_number + 1, None).is_ok()

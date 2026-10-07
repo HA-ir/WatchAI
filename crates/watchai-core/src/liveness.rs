@@ -114,11 +114,15 @@ pub fn check_session_liveness<R: ProcStatReader>(
                     session.consecutive_proc_failures += 1;
                     if session.consecutive_proc_failures >= 2 {
                         session.is_terminated = true;
-                        let _ = session.transition_to(
-                            LifecycleState::Error,
-                            session.sequence_number + 1,
-                            None,
-                        );
+                        let target_state = match session.current_state {
+                            LifecycleState::Working | LifecycleState::Starting => {
+                                LifecycleState::Error
+                            }
+                            LifecycleState::Cancelled => LifecycleState::Cancelled,
+                            _ => LifecycleState::Success,
+                        };
+                        let _ =
+                            session.transition_to(target_state, session.sequence_number + 1, None);
                         return LivenessCheckResult::Dead {
                             reason: DeadReason::ProcessTerminated {
                                 consecutive_failures: session.consecutive_proc_failures,
@@ -169,8 +173,12 @@ pub fn check_session_liveness<R: ProcStatReader>(
 
             if session.consecutive_proc_failures >= 2 {
                 session.is_terminated = true;
-                let _ =
-                    session.transition_to(LifecycleState::Error, session.sequence_number + 1, None);
+                let target_state = match session.current_state {
+                    LifecycleState::Working | LifecycleState::Starting => LifecycleState::Error,
+                    LifecycleState::Cancelled => LifecycleState::Cancelled,
+                    _ => LifecycleState::Success,
+                };
+                let _ = session.transition_to(target_state, session.sequence_number + 1, None);
                 LivenessCheckResult::Dead {
                     reason: DeadReason::ProcessTerminated {
                         consecutive_failures: session.consecutive_proc_failures,

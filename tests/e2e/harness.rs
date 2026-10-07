@@ -196,6 +196,7 @@ impl E2eTestFixture {
         let proc_dir = temp_dir.path().join("proc");
         fs::create_dir_all(&proc_dir).expect("Failed to create mock proc directory");
         let test_socket_path = temp_dir.path().join("watchai-test.sock");
+        let test_telemetry_socket_path = temp_dir.path().join("watchai-telemetry.sock");
 
         // 1. Spawn isolated dbus-daemon session bus
         let mut dbus_cmd = Command::new("dbus-daemon");
@@ -239,6 +240,7 @@ impl E2eTestFixture {
         daemon_cmd
             .env("DBUS_SESSION_BUS_ADDRESS", &dbus_address)
             .env("WATCHAI_TEST_SOCKET", &test_socket_path)
+            .env("WATCHAI_TELEMETRY_SOCKET", &test_telemetry_socket_path)
             .env("WATCHAI_PROC_ROOT", &proc_dir)
             .env("RUST_LOG", "debug")
             .stdout(Stdio::piped())
