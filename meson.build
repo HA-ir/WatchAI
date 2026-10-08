@@ -27,6 +27,7 @@ daemon_binary = custom_target(
   'watchai-daemon',
   output: 'watchai-daemon',
   build_by_default: true,
+  build_always_stale: true,
   install: true,
   install_dir: bindir,
   install_mode: 'rwxr-xr-x',
