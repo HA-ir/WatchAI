@@ -23,9 +23,10 @@ pub fn map_opencode_event(
     _current_state: LifecycleState,
 ) -> Option<(LifecycleState, Option<ToolCategory>)> {
     match event {
-        "UserPromptSubmit" | "PromptSubmit" | "TurnStart" | "SessionStart" | "CommandStart" => {
+        "UserPromptSubmit" | "PromptSubmit" | "TurnStart" | "CommandStart" => {
             Some((LifecycleState::Working, None))
         }
+        "SessionStart" => Some((LifecycleState::Idle, None)),
         "PreToolUse" | "ToolStart" | "ToolUse" | "ToolExecute" => {
             let category = tool_name.and_then(map_tool_category);
             Some((LifecycleState::Working, category))

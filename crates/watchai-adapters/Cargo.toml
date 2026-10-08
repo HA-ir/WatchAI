@@ -9,6 +9,7 @@ watchai-core = { path = "../watchai-core" }
 tokio.workspace = true
 async-trait.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 chrono.workspace = true
 tracing.workspace = true
 futures-util.workspace = true

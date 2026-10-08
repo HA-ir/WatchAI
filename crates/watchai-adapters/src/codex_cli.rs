@@ -5,8 +5,9 @@ use crate::traits::{
     TelemetryTier,
 };
 use async_trait::async_trait;
-use chrono::Utc;
-use std::path::PathBuf;
+use chrono::{DateTime, Utc};
+use std::io::{BufRead, BufReader};
+use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 use tracing::{debug, trace};
 use watchai_core::session::{
@@ -14,6 +15,135 @@ use watchai_core::session::{
     ToolCategory,
 };
 use watchai_core::state::LifecycleState;
+
+/// Inspects ~/.codex/sessions for the latest rollout log matching a project directory
+/// and extracts the authoritative turn state (Working, Success, Error, or Idle).
+pub fn read_codex_rollout_state(
+    project_path: &Path,
+    now: DateTime<Utc>,
+) -> Option<(LifecycleState, Option<ToolCategory>)> {
+    let home = std::env::var("HOME").ok()?;
+    let sessions_dir = PathBuf::from(home).join(".codex").join("sessions");
+    if !sessions_dir.is_dir() {
+        return None;
+    }
+
+    let mut files = Vec::new();
+    let mut dirs_to_visit = vec![sessions_dir];
+    while let Some(dir) = dirs_to_visit.pop() {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    dirs_to_visit.push(path);
+                } else if path.is_file() {
+                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                        if name.starts_with("rollout-") && name.ends_with(".jsonl") {
+                            if let Ok(meta) = entry.metadata() {
+                                if let Ok(mtime) = meta.modified() {
+                                    files.push((path, mtime));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    files.sort_by(|a, b| b.1.cmp(&a.1));
+
+    let canonical_proj =
+        std::fs::canonicalize(project_path).unwrap_or_else(|_| project_path.to_path_buf());
+
+    for (fpath, _) in files.iter().take(5) {
+        if let Ok(file) = std::fs::File::open(fpath) {
+            let mut reader = BufReader::new(file);
+            let mut first_line = String::new();
+            if reader.read_line(&mut first_line).is_ok() {
+                if let Ok(meta_json) = serde_json::from_str::<serde_json::Value>(&first_line) {
+                    let file_cwd = meta_json
+                        .get("payload")
+                        .and_then(|p| p.get("cwd"))
+                        .and_then(|c| c.as_str());
+
+                    if let Some(fc) = file_cwd {
+                        let fc_canon =
+                            std::fs::canonicalize(fc).unwrap_or_else(|_| PathBuf::from(fc));
+                        if fc_canon == canonical_proj {
+                            let mut last_type = None;
+                            let mut last_timestamp = None;
+
+                            let mut lines = Vec::new();
+                            let mut line = String::new();
+                            while reader.read_line(&mut line).is_ok() && !line.is_empty() {
+                                lines.push(line.clone());
+                                line.clear();
+                            }
+
+                            for l in lines.iter().rev() {
+                                if let Ok(v) = serde_json::from_str::<serde_json::Value>(l) {
+                                    if let Some(ptype) = v
+                                        .get("payload")
+                                        .and_then(|p| p.get("type"))
+                                        .and_then(|t| t.as_str())
+                                    {
+                                        if ptype == "task_started"
+                                            || ptype == "task_complete"
+                                            || ptype == "task_failed"
+                                        {
+                                            last_type = Some(ptype.to_string());
+                                            if let Some(ts_str) =
+                                                v.get("timestamp").and_then(|t| t.as_str())
+                                            {
+                                                if let Ok(dt) = DateTime::parse_from_rfc3339(ts_str)
+                                                {
+                                                    last_timestamp = Some(dt.with_timezone(&Utc));
+                                                }
+                                            }
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+
+                            if let Some(event_type) = last_type {
+                                match event_type.as_str() {
+                                    "task_started" => {
+                                        return Some((LifecycleState::Working, None));
+                                    }
+                                    "task_complete" => {
+                                        if let Some(ts) = last_timestamp {
+                                            if (now - ts).num_seconds()
+                                                <= watchai_core::aggregate::COMPLETION_DWELL_SECONDS
+                                            {
+                                                return Some((LifecycleState::Success, None));
+                                            }
+                                        }
+                                        return Some((LifecycleState::Idle, None));
+                                    }
+                                    "task_failed" => {
+                                        if let Some(ts) = last_timestamp {
+                                            if (now - ts).num_seconds()
+                                                <= watchai_core::aggregate::COMPLETION_DWELL_SECONDS
+                                            {
+                                                return Some((LifecycleState::Error, None));
+                                            }
+                                        }
+                                        return Some((LifecycleState::Idle, None));
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
 
 /// Maps OpenAI Codex CLI hook/wrapper events to WatchAI LifecycleState and optional ToolCategory.
 pub fn map_codex_event(
@@ -23,9 +153,8 @@ pub fn map_codex_event(
     _current_state: LifecycleState,
 ) -> Option<(LifecycleState, Option<ToolCategory>)> {
     match event {
-        "UserPromptSubmit" | "CommandStart" | "TurnStart" | "SessionStart" => {
-            Some((LifecycleState::Working, None))
-        }
+        "UserPromptSubmit" | "CommandStart" | "TurnStart" => Some((LifecycleState::Working, None)),
+        "SessionStart" => Some((LifecycleState::Idle, None)),
         "PreToolUse" | "ToolExecute" | "ToolStart" => {
             let category = tool_name.and_then(map_tool_category);
             Some((LifecycleState::Working, category))
@@ -227,11 +356,32 @@ impl ProviderAdapter for CodexCliAdapter {
     }
 
     async fn discover_sessions(&self) -> Vec<DiscoveredSession> {
-        ProcessScanner::scan_processes_multi(
+        let mut sessions = ProcessScanner::scan_processes_multi(
             &["codex", "codex-cli"],
             self.provider_id(),
             self.display_name(),
-        )
+        );
+
+        let now = Utc::now();
+        for s in &mut sessions {
+            if let Some((state, tool)) = read_codex_rollout_state(&s.project_path, now) {
+                s.initial_state = state;
+                s.adapter_status = AdapterStatus::Active;
+
+                let sink = self.event_sink.read().unwrap().clone();
+                if let Some(sink) = sink {
+                    let event = SessionLifecycleEvent::StateTransition {
+                        session_id: s.session_id.clone(),
+                        new_state: state,
+                        tool_category: tool,
+                        timestamp: now,
+                    };
+                    let _ = sink.ingest(event).await;
+                }
+            }
+        }
+
+        sessions
     }
 }
 
@@ -249,5 +399,12 @@ mod tests {
 
         adapter.attach_event_sink(sink);
         assert!(adapter.event_sink.read().unwrap().is_some());
+    }
+
+    #[test]
+    fn test_map_codex_session_start_is_idle() {
+        let (state, _) =
+            map_codex_event("SessionStart", None, None, LifecycleState::Unknown).unwrap();
+        assert_eq!(state, LifecycleState::Idle);
     }
 }

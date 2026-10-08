@@ -97,13 +97,24 @@ pub fn run_wrapper(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
 
     let child_pid = child.id();
 
-    // 1. Emit Start telemetry event (Working state)
+    let is_interactive = (command_name.contains("codex") || command_name.contains("opencode"))
+        && !command_args
+            .iter()
+            .any(|arg| arg == "exec" || arg == "run" || arg == "-c");
+
+    let hook_event = if is_interactive {
+        "SessionStart".to_string()
+    } else {
+        "UserPromptSubmit".to_string()
+    };
+
+    // 1. Emit Start telemetry event (Idle for interactive session, Working for one-shot command)
     let start_payload = ProviderTelemetryPayload {
         pid: child_pid,
         provider_id: Some(provider_id.clone()),
         claude_session_id: None,
         cwd: Some(cwd_str.clone()),
-        hook_event: "UserPromptSubmit".to_string(),
+        hook_event,
         tool_name: None,
         exit_reason: None,
     };
