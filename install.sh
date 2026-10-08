@@ -321,9 +321,11 @@ main() {
         fi
     fi
 
-    # 9. Enable GNOME Shell extension
+    # 9. Enable/Reload GNOME Shell extension
     if command -v gnome-extensions >/dev/null 2>&1; then
-        info "Enabling GNOME Shell extension '$EXTENSION_UUID'..."
+        info "Reloading GNOME Shell extension '$EXTENSION_UUID'..."
+        gnome-extensions disable "$EXTENSION_UUID" 2>/dev/null || true
+        sleep 0.5
         if gnome-extensions enable "$EXTENSION_UUID" 2>/dev/null; then
             success "GNOME Shell extension enabled successfully!"
         else
