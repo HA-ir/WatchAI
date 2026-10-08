@@ -6,7 +6,8 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::watch;
 use tracing::{debug, info, warn};
-use watchai_adapters::claude_code::{ClaudeCodeAdapter, ClaudeTelemetryPayload};
+use watchai_adapters::claude_code::ProviderTelemetryPayload;
+use watchai_adapters::registry::AdapterRegistry;
 use watchai_core::session::SessionRegistry;
 
 /// Maximum line length permitted over the production telemetry socket (64 KiB)
@@ -80,7 +81,7 @@ pub fn bind_telemetry_listener(socket_path: &Path) -> std::io::Result<UnixListen
 /// Runs the asynchronous telemetry socket listener loop until shutdown is signaled.
 pub async fn run_telemetry_listener(
     socket_path: PathBuf,
-    adapter: Arc<ClaudeCodeAdapter>,
+    adapters: Arc<AdapterRegistry>,
     registry: SessionRegistry,
     mut shutdown_rx: watch::Receiver<bool>,
 ) -> std::io::Result<()> {
@@ -92,10 +93,10 @@ pub async fn run_telemetry_listener(
             accept_res = listener.accept() => {
                 match accept_res {
                     Ok((stream, _)) => {
-                        let adapter = adapter.clone();
+                        let adapters = adapters.clone();
                         let registry = registry.clone();
                         tokio::spawn(async move {
-                            handle_telemetry_client(stream, adapter, registry).await;
+                            handle_telemetry_client(stream, adapters, registry).await;
                         });
                     }
                     Err(e) => {
@@ -121,7 +122,7 @@ pub async fn run_telemetry_listener(
 /// Handles an incoming telemetry client connection over the Unix stream socket.
 pub async fn handle_telemetry_client(
     stream: UnixStream,
-    adapter: Arc<ClaudeCodeAdapter>,
+    adapters: Arc<AdapterRegistry>,
     registry: SessionRegistry,
 ) {
     let mut reader = BufReader::new(stream);
@@ -143,9 +144,36 @@ pub async fn handle_telemetry_client(
                 if trimmed.is_empty() {
                     continue;
                 }
-                match serde_json::from_str::<ClaudeTelemetryPayload>(trimmed) {
+                match serde_json::from_str::<ProviderTelemetryPayload>(trimmed) {
                     Ok(payload) => {
-                        if let Err(e) = adapter.handle_telemetry(&registry, payload).await {
+                        let provider_id = payload.effective_provider_id();
+                        let res = match provider_id {
+                            "opencode" => {
+                                if let Some(adapter) = adapters.opencode_adapter() {
+                                    adapter.handle_telemetry(&registry, payload).await
+                                } else {
+                                    warn!("No OpenCode adapter registered for telemetry");
+                                    Ok(None)
+                                }
+                            }
+                            "codex-cli" => {
+                                if let Some(adapter) = adapters.codex_adapter() {
+                                    adapter.handle_telemetry(&registry, payload).await
+                                } else {
+                                    warn!("No Codex CLI adapter registered for telemetry");
+                                    Ok(None)
+                                }
+                            }
+                            _ => {
+                                if let Some(adapter) = adapters.claude_adapter() {
+                                    adapter.handle_telemetry(&registry, payload).await
+                                } else {
+                                    warn!("No Claude Code adapter registered for telemetry");
+                                    Ok(None)
+                                }
+                            }
+                        };
+                        if let Err(e) = res {
                             warn!("Failed to ingest telemetry payload: {:?}", e);
                         }
                     }
@@ -166,7 +194,7 @@ pub async fn handle_telemetry_client(
 mod tests {
     use super::*;
     use std::io::Write;
-    use watchai_adapters::traits::{EventSink, ProviderAdapter};
+    use watchai_adapters::traits::EventSink;
     use watchai_core::session::AgentSession;
     use watchai_core::state::LifecycleState;
 
@@ -211,9 +239,10 @@ mod tests {
             std::env::temp_dir().join(format!("watchai-e2e-sock-{}", std::process::id()));
         let sock_path = temp_dir.join("events.sock");
 
-        let adapter = Arc::new(ClaudeCodeAdapter::new());
+        let mut adapters = AdapterRegistry::default_registry();
         let (tx, mut rx) = tokio::sync::mpsc::channel(10);
-        adapter.attach_event_sink(EventSink::new(tx, None));
+        adapters.attach_event_sink(EventSink::new(tx, None));
+        let adapters_arc = Arc::new(adapters);
 
         let registry = SessionRegistry::new();
         let session = AgentSession::new(
@@ -229,11 +258,11 @@ mod tests {
 
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let server_path = sock_path.clone();
-        let srv_adapter = adapter.clone();
+        let srv_adapters = adapters_arc.clone();
         let srv_registry = registry.clone();
 
         let srv_handle = tokio::spawn(async move {
-            run_telemetry_listener(server_path, srv_adapter, srv_registry, shutdown_rx).await
+            run_telemetry_listener(server_path, srv_adapters, srv_registry, shutdown_rx).await
         });
 
         // Yield to allow server to bind
@@ -241,8 +270,9 @@ mod tests {
 
         // Send telemetry payload from mock client
         let mut client = std::os::unix::net::UnixStream::connect(&sock_path).unwrap();
-        let payload = ClaudeTelemetryPayload {
+        let payload = ProviderTelemetryPayload {
             pid: 9999,
+            provider_id: Some("claude-code".to_string()),
             claude_session_id: Some("uuid-123".to_string()),
             cwd: Some("/home/user/project".to_string()),
             hook_event: "UserPromptSubmit".to_string(),

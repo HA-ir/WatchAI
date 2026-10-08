@@ -9,6 +9,8 @@ use std::sync::Arc;
 pub struct AdapterRegistry {
     adapters: Vec<Arc<dyn ProviderAdapter>>,
     claude_adapter: Option<Arc<ClaudeCodeAdapter>>,
+    opencode_adapter: Option<Arc<OpenCodeAdapter>>,
+    codex_adapter: Option<Arc<CodexCliAdapter>>,
     event_sink: Option<EventSink>,
 }
 
@@ -17,6 +19,8 @@ impl AdapterRegistry {
         Self {
             adapters: Vec::new(),
             claude_adapter: None,
+            opencode_adapter: None,
+            codex_adapter: None,
             event_sink: None,
         }
     }
@@ -35,14 +39,30 @@ impl AdapterRegistry {
         let claude = Arc::new(ClaudeCodeAdapter::new());
         reg.claude_adapter = Some(claude.clone());
         reg.register(claude);
-        reg.register(Arc::new(CodexCliAdapter::new()));
-        reg.register(Arc::new(OpenCodeAdapter::new()));
+
+        let codex = Arc::new(CodexCliAdapter::new());
+        reg.codex_adapter = Some(codex.clone());
+        reg.register(codex);
+
+        let opencode = Arc::new(OpenCodeAdapter::new());
+        reg.opencode_adapter = Some(opencode.clone());
+        reg.register(opencode);
         reg
     }
 
     /// Retrieve the typed ClaudeCodeAdapter reference if registered.
     pub fn claude_adapter(&self) -> Option<Arc<ClaudeCodeAdapter>> {
         self.claude_adapter.clone()
+    }
+
+    /// Retrieve the typed OpenCodeAdapter reference if registered.
+    pub fn opencode_adapter(&self) -> Option<Arc<OpenCodeAdapter>> {
+        self.opencode_adapter.clone()
+    }
+
+    /// Retrieve the typed CodexCliAdapter reference if registered.
+    pub fn codex_adapter(&self) -> Option<Arc<CodexCliAdapter>> {
+        self.codex_adapter.clone()
     }
 
     /// Attach an EventSink handle to all registered adapters.

@@ -15,19 +15,22 @@ use watchai_core::session::{
 };
 use watchai_core::state::LifecycleState;
 
-/// Sanitized, metadata-only telemetry event emitted by the Claude Code hook forwarder.
+/// Sanitized, metadata-only telemetry event emitted by hook forwarders or wrappers.
 /// Strictly non-invasive: contains no prompts, tool inputs, responses, or secrets.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct ClaudeTelemetryPayload {
-    /// Operating system Process ID of the Claude Code instance (from CLAUDE_PID).
+    /// Operating system Process ID of the agent instance.
     pub pid: u32,
-    /// Claude-internal session UUID (from session_id).
+    /// Canonical provider slug (e.g. "claude-code", "opencode", "codex-cli").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+    /// Provider-internal session UUID (from session_id).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claude_session_id: Option<String>,
-    /// Active project directory path (from cwd / CLAUDE_PROJECT_DIR).
+    /// Active project directory path (from cwd / project directory).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
-    /// Native hook event name (e.g. "UserPromptSubmit", "PreToolUse", "PermissionRequest", "Stop", "SessionEnd").
+    /// Hook or wrapper event name (e.g. "UserPromptSubmit", "PreToolUse", "PermissionRequest", "Stop", "SessionEnd").
     pub hook_event: String,
     /// Tool name for tool-use events (e.g. "Bash", "Edit", "Read").
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -37,9 +40,22 @@ pub struct ClaudeTelemetryPayload {
     pub exit_reason: Option<String>,
 }
 
+/// Generic alias for multi-provider telemetry payloads.
+pub type ProviderTelemetryPayload = ClaudeTelemetryPayload;
+
 impl ClaudeTelemetryPayload {
+    /// Returns the resolved provider slug, defaulting to "claude-code".
+    pub fn effective_provider_id(&self) -> &str {
+        self.provider_id.as_deref().unwrap_or("claude-code")
+    }
+
     /// Enforces maximum length bounds on string fields to prevent memory bloat.
     pub fn sanitize(&mut self) {
+        if let Some(ref mut p) = self.provider_id {
+            if p.len() > 64 {
+                p.truncate(64);
+            }
+        }
         if let Some(ref mut s) = self.claude_session_id {
             if s.len() > 128 {
                 s.truncate(128);
@@ -66,14 +82,21 @@ impl ClaudeTelemetryPayload {
     }
 }
 
-/// Maps Claude Code tool names to high-level sanitized ToolCategory variants.
+/// Maps tool names across providers to high-level sanitized ToolCategory variants.
 pub fn map_tool_category(tool_name: &str) -> Option<ToolCategory> {
-    match tool_name {
-        "Bash" => Some(ToolCategory::ShellExecution),
-        "Read" => Some(ToolCategory::FileRead),
-        "Edit" | "Write" | "NotebookEdit" => Some(ToolCategory::FileWrite),
-        "Glob" | "Grep" => Some(ToolCategory::Search),
-        "Agent" | "AskUserQuestion" => Some(ToolCategory::ModelThinking),
+    match tool_name.to_lowercase().as_str() {
+        "bash" | "shell" | "terminal" | "exec" | "command" | "cmd" | "sh" => {
+            Some(ToolCategory::ShellExecution)
+        }
+        "read" | "fileread" | "view" | "cat" | "read_file" => Some(ToolCategory::FileRead),
+        "edit" | "write" | "notebookedit" | "filewrite" | "write_file" | "apply_patch"
+        | "patch" => Some(ToolCategory::FileWrite),
+        "glob" | "grep" | "search" | "find" | "find_files" | "search_files" => {
+            Some(ToolCategory::Search)
+        }
+        "agent" | "askuserquestion" | "think" | "thinking" | "plan" => {
+            Some(ToolCategory::ModelThinking)
+        }
         _ => None,
     }
 }
@@ -468,6 +491,7 @@ mod tests {
 
         let payload = ClaudeTelemetryPayload {
             pid: 4242,
+            provider_id: Some("claude-code".to_string()),
             claude_session_id: Some("uuid-1".to_string()),
             cwd: Some("/home/user/project".to_string()),
             hook_event: "UserPromptSubmit".to_string(),
@@ -530,6 +554,7 @@ mod tests {
         // Telemetry for PID 1001 only
         let payload = ClaudeTelemetryPayload {
             pid: 1001,
+            provider_id: Some("claude-code".to_string()),
             claude_session_id: None,
             cwd: Some("/workspace/proj".to_string()),
             hook_event: "PreToolUse".to_string(),
@@ -556,6 +581,7 @@ mod tests {
     fn test_payload_sanitization_bounds_field_lengths() {
         let mut payload = ClaudeTelemetryPayload {
             pid: 500,
+            provider_id: Some("a".repeat(100)),
             claude_session_id: Some("a".repeat(200)),
             cwd: Some("b".repeat(2000)),
             hook_event: "c".repeat(100),
@@ -563,6 +589,7 @@ mod tests {
             exit_reason: Some("e".repeat(100)),
         };
         payload.sanitize();
+        assert_eq!(payload.provider_id.unwrap().len(), 64);
         assert_eq!(payload.claude_session_id.unwrap().len(), 128);
         assert_eq!(payload.cwd.unwrap().len(), 1024);
         assert_eq!(payload.hook_event.len(), 64);

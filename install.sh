@@ -34,6 +34,7 @@ GNOME Shell extension into the user directory without requiring root.
 Options:
   --help, -h          Show this help message and exit
   --uninstall, -u     Cleanly uninstall WatchAI, stop user service, and remove assets
+  --pack              Pack GNOME Shell extension into .shell-extension.zip (for extensions.gnome.org)
   --dry-run           Check prerequisites and show installation plan without modifying system
   --no-start          Install artifacts but do not start systemd service or enable extension
   --with-claude-hooks Register live activity telemetry hooks in ~/.claude/settings.json
@@ -149,6 +150,10 @@ main() {
                 action="uninstall"
                 shift
                 ;;
+            --pack)
+                action="pack"
+                shift
+                ;;
             --dry-run)
                 dry_run=1
                 shift
@@ -180,6 +185,13 @@ main() {
     # Handle uninstallation
     if [[ "$action" == "uninstall" ]]; then
         do_uninstall
+        exit 0
+    fi
+
+    # Handle packaging
+    if [[ "$action" == "pack" ]]; then
+        info "Packing GNOME Shell extension for distribution..."
+        "$REPO_ROOT/scripts/pack-extension.sh" "$REPO_ROOT" "$BUILD_DIR"
         exit 0
     fi
 
@@ -309,9 +321,11 @@ main() {
         fi
     fi
 
-    # 9. Enable GNOME Shell extension
+    # 9. Enable/Reload GNOME Shell extension
     if command -v gnome-extensions >/dev/null 2>&1; then
-        info "Enabling GNOME Shell extension '$EXTENSION_UUID'..."
+        info "Reloading GNOME Shell extension '$EXTENSION_UUID'..."
+        gnome-extensions disable "$EXTENSION_UUID" 2>/dev/null || true
+        sleep 0.5
         if gnome-extensions enable "$EXTENSION_UUID" 2>/dev/null; then
             success "GNOME Shell extension enabled successfully!"
         else
