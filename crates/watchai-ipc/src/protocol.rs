@@ -41,7 +41,9 @@ impl From<&AgentSession> for SessionDto {
 pub struct AggregateStateDto {
     pub state: String,
     pub active_session_count: u32,
+    pub working_session_count: u32,
     pub waiting_session_count: u32,
+    pub success_session_count: u32,
     pub error_session_count: u32,
     pub updated_at: String,
 }

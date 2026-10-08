@@ -152,7 +152,7 @@ pub fn resolve_mock_binary() -> PathBuf {
     default_path = "/org/freedesktop/WatchAI"
 )]
 pub trait WatchAiService {
-    fn get_aggregate_state(&self) -> zbus::Result<(String, u32, u32, u32, String)>;
+    fn get_aggregate_state(&self) -> zbus::Result<(String, u32, u32, u32, u32, u32, String)>;
     fn get_sessions(&self) -> zbus::Result<Vec<SessionDto>>;
     fn get_session(&self, session_id: String) -> zbus::Result<SessionDto>;
 
@@ -165,12 +165,15 @@ pub trait WatchAiService {
     #[zbus(signal)]
     fn session_removed(&self, session_id: String) -> zbus::Result<()>;
 
+    #[allow(clippy::too_many_arguments)]
     #[zbus(signal)]
     fn aggregate_state_changed(
         &self,
         state: String,
         active_session_count: u32,
+        working_session_count: u32,
         waiting_session_count: u32,
+        success_session_count: u32,
         error_session_count: u32,
         updated_at: String,
     ) -> zbus::Result<()>;

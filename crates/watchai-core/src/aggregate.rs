@@ -14,8 +14,12 @@ pub struct AggregateCalculation {
     pub aggregate_state: LifecycleState,
     /// Count of active or dwelling sessions.
     pub active_session_count: u32,
+    /// Count of sessions in WORKING.
+    pub working_session_count: u32,
     /// Count of sessions in WAITING.
     pub waiting_session_count: u32,
+    /// Count of sessions in SUCCESS currently within dwell.
+    pub success_session_count: u32,
     /// Count of sessions in ERROR (regardless of dwell).
     pub error_session_count: u32,
     /// Contextually focused session ID for single-session inspection.
@@ -146,22 +150,32 @@ pub fn compute_aggregate_state(
         return AggregateCalculation {
             aggregate_state: LifecycleState::Idle,
             active_session_count: 0,
+            working_session_count: 0,
             waiting_session_count: 0,
+            success_session_count: 0,
             error_session_count: 0,
             focused_session_id: None,
         };
     }
 
     let mut active_count = 0u32;
+    let mut working_count = 0u32;
     let mut waiting_count = 0u32;
+    let mut success_count = 0u32;
     let mut error_count = 0u32;
 
     for s in sessions {
         if is_active_session(s, now) {
             active_count += 1;
         }
+        if s.current_state == LifecycleState::Working {
+            working_count += 1;
+        }
         if s.current_state == LifecycleState::Waiting {
             waiting_count += 1;
+        }
+        if s.current_state == LifecycleState::Success && within_dwell(s, now) {
+            success_count += 1;
         }
         if s.current_state == LifecycleState::Error {
             error_count += 1;
@@ -196,7 +210,9 @@ pub fn compute_aggregate_state(
     AggregateCalculation {
         aggregate_state,
         active_session_count: active_count,
+        working_session_count: working_count,
         waiting_session_count: waiting_count,
+        success_session_count: success_count,
         error_session_count: error_count,
         focused_session_id,
     }

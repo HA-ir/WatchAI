@@ -20,7 +20,9 @@ impl WatchAiDbusService {
         let initial_aggregate = AggregateStateDto {
             state: "IDLE".to_string(),
             active_session_count: 0,
+            working_session_count: 0,
             waiting_session_count: 0,
+            success_session_count: 0,
             error_session_count: 0,
             updated_at: chrono::Utc::now().to_rfc3339(),
         };
@@ -40,12 +42,14 @@ impl WatchAiDbusService {
 #[interface(name = "org.freedesktop.WatchAI")]
 impl WatchAiDbusService {
     /// Return current aggregate state and counters.
-    async fn get_aggregate_state(&self) -> (String, u32, u32, u32, String) {
+    async fn get_aggregate_state(&self) -> (String, u32, u32, u32, u32, u32, String) {
         let agg = self.aggregate.read().await;
         (
             agg.state.clone(),
             agg.active_session_count,
+            agg.working_session_count,
             agg.waiting_session_count,
+            agg.success_session_count,
             agg.error_session_count,
             agg.updated_at.clone(),
         )
@@ -69,12 +73,15 @@ impl WatchAiDbusService {
 
     // --- Signals ---
 
+    #[allow(clippy::too_many_arguments)]
     #[zbus(signal, name = "AggregateStateChanged")]
     pub async fn emit_aggregate_state_changed(
         signal_ctxt: &SignalContext<'_>,
         state: &str,
         active_session_count: u32,
+        working_session_count: u32,
         waiting_session_count: u32,
+        success_session_count: u32,
         error_session_count: u32,
         updated_at: &str,
     ) -> zbus::Result<()>;

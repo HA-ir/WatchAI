@@ -80,15 +80,23 @@ impl ProcessScanner {
             return true;
         }
 
-        // 2. Check environ for child session marker
-        let environ_path = proc_path.join("environ");
-        if let Ok(env_bytes) = fs::read(&environ_path) {
-            // Null-delimited environment strings
-            if env_bytes
-                .windows(b"CLAUDE_CODE_CHILD_SESSION=".len())
-                .any(|w| w == b"CLAUDE_CODE_CHILD_SESSION=")
-            {
-                return true;
+        // 2. Check environ for Claude Code child session marker
+        // Only apply to direct `claude` binary executions to avoid false filtering
+        // on unrelated processes or test runners that inherit the environment variable.
+        let argv0 = args.first().map(|s| s.as_str()).unwrap_or("");
+        let exe_name = Path::new(argv0)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
+        if exe_name == "claude" || exe_name == "claude-cli" {
+            let environ_path = proc_path.join("environ");
+            if let Ok(env_bytes) = fs::read(&environ_path) {
+                if env_bytes
+                    .windows(b"CLAUDE_CODE_CHILD_SESSION=".len())
+                    .any(|w| w == b"CLAUDE_CODE_CHILD_SESSION=")
+                {
+                    return true;
+                }
             }
         }
 

@@ -24,7 +24,9 @@ fn test_zero_sessions_aggregation() {
 
     assert_eq!(result.aggregate_state, LifecycleState::Idle);
     assert_eq!(result.active_session_count, 0);
+    assert_eq!(result.working_session_count, 0);
     assert_eq!(result.waiting_session_count, 0);
+    assert_eq!(result.success_session_count, 0);
     assert_eq!(result.error_session_count, 0);
     assert_eq!(result.focused_session_id, None);
 }
@@ -109,8 +111,36 @@ fn test_counter_calculations() {
 
     assert_eq!(res.aggregate_state, LifecycleState::Error);
     assert_eq!(res.active_session_count, 3); // s1, s2, s3 (in dwell)
+    assert_eq!(res.working_session_count, 1); // s1
     assert_eq!(res.waiting_session_count, 1); // s2
+    assert_eq!(res.success_session_count, 0); // s5 is expired past dwell
     assert_eq!(res.error_session_count, 1); // s3
+}
+
+#[test]
+fn test_granular_coexistence_and_dwell() {
+    let now = Utc::now();
+
+    // S1: Working (entered 5s ago)
+    let s_working = make_session("sess-working", LifecycleState::Working, 5);
+    // S2: Success within dwell (entered 10s ago)
+    let s_success = make_session("sess-success", LifecycleState::Success, 10);
+
+    let res = compute_aggregate_state(&[s_working.clone(), s_success.clone()], now);
+    assert_eq!(res.aggregate_state, LifecycleState::Working);
+    assert_eq!(res.active_session_count, 2);
+    assert_eq!(res.working_session_count, 1);
+    assert_eq!(res.success_session_count, 1);
+    assert_eq!(res.waiting_session_count, 0);
+    assert_eq!(res.error_session_count, 0);
+
+    // S2 expired past dwell (entered 65s ago)
+    let s_success_expired = make_session("sess-success-exp", LifecycleState::Success, 65);
+    let res2 = compute_aggregate_state(&[s_working, s_success_expired], now);
+    assert_eq!(res2.aggregate_state, LifecycleState::Working);
+    assert_eq!(res2.active_session_count, 1);
+    assert_eq!(res2.working_session_count, 1);
+    assert_eq!(res2.success_session_count, 0);
 }
 
 #[test]

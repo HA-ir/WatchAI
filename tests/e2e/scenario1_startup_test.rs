@@ -17,14 +17,16 @@ async fn test_scenario1_daemon_startup_and_dbus_registration() {
         .expect("Failed to acquire D-Bus proxy");
 
     // 1. Assert initial aggregate state
-    let (state, active, waiting, error, updated_at) = proxy
+    let (state, active, working, waiting, success, error, updated_at) = proxy
         .get_aggregate_state()
         .await
         .expect("GetAggregateState call failed");
 
     assert_eq!(state, "IDLE", "Initial state must be IDLE");
     assert_eq!(active, 0, "Initial active count must be 0");
+    assert_eq!(working, 0, "Initial working count must be 0");
     assert_eq!(waiting, 0, "Initial waiting count must be 0");
+    assert_eq!(success, 0, "Initial success count must be 0");
     assert_eq!(error, 0, "Initial error count must be 0");
     assert!(
         DateTime::parse_from_rfc3339(&updated_at).is_ok(),

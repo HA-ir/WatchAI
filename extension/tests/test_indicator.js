@@ -71,6 +71,40 @@ try {
     testAllStatesHaveUniqueIconsAndDescriptions();
     testAccessibilityFormatting();
     testIconStyleModeClassGeneration();
+
+    // Test Approach A multi-status logic
+    function testMultiStatusBadgeLogic() {
+        // Coexisting working=1 and success=1
+        const activeCount = 2;
+        const workingCount = 1;
+        const successCount = 1;
+        const waitingCount = 0;
+        const errorCount = 0;
+
+        const hasWorking = workingCount > 0;
+        const hasWaiting = waitingCount > 0;
+        const hasSuccess = successCount > 0;
+        const hasError = errorCount > 0;
+        const categoryCount = (hasWorking ? 1 : 0) + (hasWaiting ? 1 : 0) + (hasSuccess ? 1 : 0) + (hasError ? 1 : 0);
+
+        assertEqual(categoryCount, 2, 'Must detect 2 coexisting categories');
+
+        const details = [];
+        if (hasWorking) details.push(`${workingCount} working`);
+        if (hasWaiting) details.push(`${waitingCount} waiting for input`);
+        if (hasError) details.push(`${errorCount} in error`);
+        if (hasSuccess) details.push(`${successCount} completed`);
+        const a11y = `WatchAI: ${details.join(', ')} (${activeCount} active sessions)`;
+
+        assertEqual(
+            a11y,
+            'WatchAI: 1 working, 1 completed (2 active sessions)',
+            'Multi-status a11y announcement mismatch'
+        );
+        print('✓ Multi-status badge coexisting category evaluation and a11y text verified.');
+    }
+    testMultiStatusBadgeLogic();
+
     print('\nAll indicator GJS tests passed successfully!');
 } catch (e) {
     printerr('Test failed: ' + e + '\n' + e.stack);

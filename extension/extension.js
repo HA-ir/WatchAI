@@ -20,7 +20,9 @@ export default class WatchAIExtension extends Extension {
                         payload.aggregateState.state,
                         payload.aggregateState.activeCount,
                         payload.aggregateState.waitingCount,
-                        payload.aggregateState.errorCount
+                        payload.aggregateState.errorCount,
+                        payload.aggregateState.workingCount,
+                        payload.aggregateState.successCount
                     );
                 }
                 if (this._indicator.popover) {
@@ -41,7 +43,9 @@ export default class WatchAIExtension extends Extension {
                         agg.state,
                         agg.activeCount,
                         agg.waitingCount,
-                        agg.errorCount
+                        agg.errorCount,
+                        agg.workingCount,
+                        agg.successCount
                     );
                 }
             },
