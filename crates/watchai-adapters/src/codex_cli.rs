@@ -51,7 +51,7 @@ pub fn read_codex_rollout_state(
         }
     }
 
-    files.sort_by(|a, b| b.1.cmp(&a.1));
+    files.sort_by_key(|a| std::cmp::Reverse(a.1));
 
     let canonical_proj =
         std::fs::canonicalize(project_path).unwrap_or_else(|_| project_path.to_path_buf());
