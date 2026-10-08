@@ -554,7 +554,7 @@ fn test_multi_provider_startup_recovery_canonical_sorting() {
     // Expected order: claude-code (d1), codex-cli (d2), opencode (d3)
     let expected = vec!["s1", "s2", "s3"];
 
-    let mut perm = vec![d3.clone(), d1.clone(), d2.clone()];
+    let mut perm = [d3.clone(), d1.clone(), d2.clone()];
     perm.sort_by(|a, b| a.deterministic_cmp(b));
 
     let ids: Vec<&str> = perm.iter().map(|s| s.session_id.as_str()).collect();
