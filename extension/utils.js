@@ -154,3 +154,57 @@ export function sanitizeProjectName(rawName) {
 
     return cleaned;
 }
+
+/**
+ * Focuses the desktop window associated with a target process ID.
+ * Traverses process ancestors to identify terminal emulators or host containers.
+ */
+export function activateWindowForProcess(pid) {
+    if (!pid || pid <= 0) return false;
+
+    // Collect process ancestors up to init/systemd
+    const pids = new Set();
+    let currentPid = pid;
+    for (let depth = 0; depth < 10 && currentPid > 1; depth++) {
+        pids.add(currentPid);
+        try {
+            const [, statBytes] = GLib.file_get_contents(`/proc/${currentPid}/stat`);
+            if (!statBytes) break;
+            const str = new TextDecoder().decode(statBytes);
+            const closeParen = str.lastIndexOf(')');
+            if (closeParen === -1) break;
+            const fields = str.substring(closeParen + 2).trim().split(/\s+/);
+            const ppid = parseInt(fields[1], 10);
+            if (ppid > 1) {
+                currentPid = ppid;
+            } else {
+                break;
+            }
+        } catch {
+            break;
+        }
+    }
+
+    if (typeof globalThis.global === 'undefined' || typeof global.get_window_actors !== 'function') {
+        return false;
+    }
+
+    try {
+        const windowActors = global.get_window_actors();
+        for (const actor of windowActors) {
+            const metaWindow = actor.get_meta_window();
+            if (metaWindow && pids.has(metaWindow.get_pid())) {
+                const workspace = metaWindow.get_workspace();
+                if (workspace) {
+                    workspace.activate(global.get_current_time());
+                }
+                metaWindow.activate(global.get_current_time());
+                return true;
+            }
+        }
+    } catch (e) {
+        console.warn('WatchAI: Failed to activate window for PID ' + pid, e);
+    }
+
+    return false;
+}

@@ -149,7 +149,7 @@ class WatchAIIndicator extends PanelMenu.Button {
         this.add_child(this._box);
 
         // Attach session inspection popover to button menu
-        this._popover = new WatchAISessionPopover(this.menu);
+        this._popover = new WatchAISessionPopover(this.menu, this._settings);
 
         this._currentState = 'IDLE';
         this._activeCount = 0;

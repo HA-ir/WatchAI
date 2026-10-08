@@ -4,7 +4,7 @@ use crate::traits::{
     TelemetryTier,
 };
 use async_trait::async_trait;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::RwLock;
@@ -155,6 +155,42 @@ pub fn map_claude_hook_event(
         }
         "SessionStart" => {
             // Session established; initialize in Idle
+            Some((LifecycleState::Idle, None))
+        }
+        _ => None,
+    }
+}
+
+/// Inspects ~/.claude/sessions/<pid>.json to read the authoritative interactive state
+/// of a Claude Code CLI process.
+pub fn read_claude_session_status(
+    pid: u32,
+    now: DateTime<Utc>,
+) -> Option<(LifecycleState, Option<ToolCategory>)> {
+    let home = std::env::var("HOME").ok()?;
+    let session_file = PathBuf::from(home)
+        .join(".claude")
+        .join("sessions")
+        .join(format!("{}.json", pid));
+
+    if !session_file.is_file() {
+        return None;
+    }
+
+    let file = std::fs::File::open(&session_file).ok()?;
+    let val: serde_json::Value = serde_json::from_reader(file).ok()?;
+
+    let status = val.get("status").and_then(|s| s.as_str())?;
+    match status {
+        "busy" => Some((LifecycleState::Working, None)),
+        "idle" => {
+            if let Some(ts_ms) = val.get("statusUpdatedAt").and_then(|t| t.as_i64()) {
+                let updated_secs = ts_ms / 1000;
+                let now_secs = now.timestamp();
+                if (now_secs - updated_secs) <= watchai_core::aggregate::COMPLETION_DWELL_SECONDS {
+                    return Some((LifecycleState::Success, None));
+                }
+            }
             Some((LifecycleState::Idle, None))
         }
         _ => None,
@@ -343,8 +379,31 @@ impl ProviderAdapter for ClaudeCodeAdapter {
     }
 
     async fn discover_sessions(&self) -> Vec<DiscoveredSession> {
-        // Use non-invasive /proc scanner targeting "claude"
-        ProcessScanner::scan_processes("claude", self.provider_id(), self.display_name())
+        let mut sessions =
+            ProcessScanner::scan_processes("claude", self.provider_id(), self.display_name());
+
+        let now = Utc::now();
+        for s in &mut sessions {
+            if let Some(pid) = s.process_id {
+                if let Some((state, tool)) = read_claude_session_status(pid, now) {
+                    s.initial_state = state;
+                    s.adapter_status = AdapterStatus::Active;
+
+                    let sink = self.event_sink.read().unwrap().clone();
+                    if let Some(sink) = sink {
+                        let event = SessionLifecycleEvent::StateTransition {
+                            session_id: s.session_id.clone(),
+                            new_state: state,
+                            tool_category: tool,
+                            timestamp: now,
+                        };
+                        let _ = sink.ingest(event).await;
+                    }
+                }
+            }
+        }
+
+        sessions
     }
 }
 
@@ -362,6 +421,64 @@ mod tests {
 
         adapter.attach_event_sink(sink);
         assert!(adapter.event_sink.read().unwrap().is_some());
+    }
+
+    #[test]
+    fn test_read_claude_session_status_busy_and_idle() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().to_path_buf();
+        let sessions_dir = home.join(".claude").join("sessions");
+        std::fs::create_dir_all(&sessions_dir).unwrap();
+
+        let old_home = std::env::var("HOME").ok();
+        std::env::set_var("HOME", &home);
+
+        let now = Utc::now();
+
+        // 1. Busy session
+        let busy_file = sessions_dir.join("9991.json");
+        std::fs::write(
+            &busy_file,
+            r#"{"pid":9991,"status":"busy","statusUpdatedAt":1791400000000}"#,
+        )
+        .unwrap();
+        let res = read_claude_session_status(9991, now);
+        assert_eq!(res, Some((LifecycleState::Working, None)));
+
+        // 2. Idle session within 60s dwell
+        let idle_recent_file = sessions_dir.join("9992.json");
+        let recent_ms = (now.timestamp() - 10) * 1000;
+        std::fs::write(
+            &idle_recent_file,
+            format!(
+                r#"{{"pid":9992,"status":"idle","statusUpdatedAt":{}}}"#,
+                recent_ms
+            ),
+        )
+        .unwrap();
+        let res = read_claude_session_status(9992, now);
+        assert_eq!(res, Some((LifecycleState::Success, None)));
+
+        // 3. Idle session past 60s dwell
+        let idle_old_file = sessions_dir.join("9993.json");
+        let old_ms = (now.timestamp() - 120) * 1000;
+        std::fs::write(
+            &idle_old_file,
+            format!(
+                r#"{{"pid":9993,"status":"idle","statusUpdatedAt":{}}}"#,
+                old_ms
+            ),
+        )
+        .unwrap();
+        let res = read_claude_session_status(9993, now);
+        assert_eq!(res, Some((LifecycleState::Idle, None)));
+
+        // Restore HOME
+        if let Some(h) = old_home {
+            std::env::set_var("HOME", h);
+        } else {
+            std::env::remove_var("HOME");
+        }
     }
 
     #[test]

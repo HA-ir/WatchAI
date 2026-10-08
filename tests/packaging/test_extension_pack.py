@@ -23,6 +23,7 @@ REQUIRED_ROOT_FILES = {
     "indicator.js",
     "notifications.js",
     "popover.js",
+    "prefs.js",
     "settings.js",
     "utils.js",
 }
