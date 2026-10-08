@@ -380,9 +380,7 @@ async fn run_daemon() -> Result<(), Box<dyn std::error::Error>> {
                                                 ingest_iface.signal_context(),
                                                 &agg_dto.state,
                                                 agg_dto.active_session_count,
-                                                agg_dto.working_session_count,
                                                 agg_dto.waiting_session_count,
-                                                agg_dto.success_session_count,
                                                 agg_dto.error_session_count,
                                                 &agg_dto.updated_at,
                                             ).await {
@@ -407,9 +405,7 @@ async fn run_daemon() -> Result<(), Box<dyn std::error::Error>> {
                                                 ingest_iface.signal_context(),
                                                 &agg_dto.state,
                                                 agg_dto.active_session_count,
-                                                agg_dto.working_session_count,
                                                 agg_dto.waiting_session_count,
-                                                agg_dto.success_session_count,
                                                 agg_dto.error_session_count,
                                                 &agg_dto.updated_at,
                                             ).await {
@@ -558,9 +554,7 @@ async fn run_daemon() -> Result<(), Box<dyn std::error::Error>> {
                             bg_iface.signal_context(),
                             &agg_dto.state,
                             agg_dto.active_session_count,
-                            agg_dto.working_session_count,
                             agg_dto.waiting_session_count,
-                            agg_dto.success_session_count,
                             agg_dto.error_session_count,
                             &agg_dto.updated_at,
                         )

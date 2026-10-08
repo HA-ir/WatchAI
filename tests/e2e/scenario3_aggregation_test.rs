@@ -43,13 +43,10 @@ async fn test_scenario3_multi_session_priority_and_tie_breaking() {
         .unwrap();
 
     // Verify WAITING overrides WORKING: active=2, waiting=1, error=0
-    let (state1, active1, working1, waiting1, success1, error1, _) =
-        proxy.get_aggregate_state().await.unwrap();
+    let (state1, active1, waiting1, error1, _) = proxy.get_aggregate_state().await.unwrap();
     assert_eq!(state1, "WAITING", "WAITING must override WORKING");
     assert_eq!(active1, 2, "Active count must be 2");
-    assert_eq!(working1, 1, "Working count must be 1");
     assert_eq!(waiting1, 1, "Waiting count must be 1");
-    assert_eq!(success1, 0, "Success count must be 0");
     assert_eq!(error1, 0, "Error count must be 0");
 
     // 2. Transition Session 1 to ERROR -> Aggregate immediately becomes ERROR (ERROR > WAITING)
@@ -64,13 +61,10 @@ async fn test_scenario3_multi_session_priority_and_tie_breaking() {
         ])
         .unwrap();
 
-    let (state2, active2, working2, waiting2, success2, error2, _) =
-        proxy.get_aggregate_state().await.unwrap();
+    let (state2, active2, waiting2, error2, _) = proxy.get_aggregate_state().await.unwrap();
     assert_eq!(state2, "ERROR", "ERROR must override WAITING");
     assert_eq!(active2, 2, "Active count must be 2");
-    assert_eq!(working2, 0, "Working count must be 0");
     assert_eq!(waiting2, 1, "Waiting count must be 1");
-    assert_eq!(success2, 0, "Success count must be 0");
     assert_eq!(error2, 1, "Error count must be 1");
 
     // 3. Register Session 3 in ERROR with newer timestamp -> Contextual tie-breaking
@@ -134,11 +128,9 @@ async fn test_scenario3_multi_session_priority_and_tie_breaking() {
 
     // With Session 1 (ERROR), Session 3 (ERROR), and Session 2 (SUCCESS),
     // aggregate state must remain ERROR (ERROR 80 > SUCCESS 30) while dwelling
-    let (state_term, active_term, _, _, success_term, error_term, _) =
-        proxy.get_aggregate_state().await.unwrap();
+    let (state_term, active_term, _, error_term, _) = proxy.get_aggregate_state().await.unwrap();
     assert_eq!(state_term, "ERROR", "ERROR (80) must override SUCCESS (30)");
     assert_eq!(active_term, 3, "All 3 sessions are dwelling");
-    assert_eq!(success_term, 1, "One session in success");
     assert_eq!(error_term, 2, "Two sessions in error");
 
     // 5. Verify completion dwell smooth reset to IDLE after all terminal states expire (60s)
@@ -147,7 +139,7 @@ async fn test_scenario3_multi_session_priority_and_tie_breaking() {
     let mut idle_reached = false;
 
     while dwell_start.elapsed() < poll_deadline {
-        let (s, a, _, _, _, _, _) = proxy.get_aggregate_state().await.unwrap();
+        let (s, a, _, _, _) = proxy.get_aggregate_state().await.unwrap();
         if s == "IDLE" {
             let elapsed = dwell_start.elapsed();
             assert!(

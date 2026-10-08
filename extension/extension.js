@@ -5,6 +5,36 @@ import { WatchAIDbusClient } from './dbus_client.js';
 import { SettingsManager } from './settings.js';
 
 export default class WatchAIExtension extends Extension {
+    _syncIndicator(state, activeCount) {
+        if (!this._indicator) return;
+        const sessions = this._indicator.popover ? this._indicator.popover.getSessions() : [];
+        let workingCount = 0;
+        let waitingCount = 0;
+        let successCount = 0;
+        let errorCount = 0;
+
+        for (const s of sessions) {
+            const st = (s.currentState || '').toUpperCase();
+            if (st === 'WORKING') workingCount += 1;
+            else if (st === 'WAITING') waitingCount += 1;
+            else if (st === 'SUCCESS') successCount += 1;
+            else if (st === 'ERROR') errorCount += 1;
+        }
+
+        const effectiveActive = activeCount !== undefined && activeCount !== null
+            ? activeCount
+            : (workingCount + waitingCount + successCount + errorCount);
+
+        this._indicator.updateState(
+            state || this._indicator._currentState || 'IDLE',
+            effectiveActive,
+            waitingCount,
+            errorCount,
+            workingCount,
+            successCount
+        );
+    }
+
     enable() {
         // Initialize GSettings preferences manager (T063)
         this._settings = new SettingsManager(this);
@@ -15,22 +45,14 @@ export default class WatchAIExtension extends Extension {
         this._dbusClient = new WatchAIDbusClient({
             onConnected: (payload) => {
                 if (!this._indicator) return;
-                if (payload && payload.aggregateState) {
-                    this._indicator.updateState(
-                        payload.aggregateState.state,
-                        payload.aggregateState.activeCount,
-                        payload.aggregateState.waitingCount,
-                        payload.aggregateState.errorCount,
-                        payload.aggregateState.workingCount,
-                        payload.aggregateState.successCount
-                    );
-                }
                 if (this._indicator.popover) {
                     this._indicator.popover.setOfflineMode(false);
                     if (payload && payload.sessions) {
                         this._indicator.popover.setSessions(payload.sessions);
                     }
                 }
+                const agg = payload ? payload.aggregateState : null;
+                this._syncIndicator(agg ? agg.state : null, agg ? agg.activeCount : null);
             },
             onDisconnected: () => {
                 if (this._indicator) {
@@ -39,14 +61,7 @@ export default class WatchAIExtension extends Extension {
             },
             onAggregateStateChanged: (agg) => {
                 if (this._indicator) {
-                    this._indicator.updateState(
-                        agg.state,
-                        agg.activeCount,
-                        agg.waitingCount,
-                        agg.errorCount,
-                        agg.workingCount,
-                        agg.successCount
-                    );
+                    this._syncIndicator(agg ? agg.state : null, agg ? agg.activeCount : null);
                 }
             },
             onSessionAdded: (session) => {
@@ -54,6 +69,7 @@ export default class WatchAIExtension extends Extension {
                     if (this._indicator.popover) {
                         this._indicator.popover.addSession(session);
                     }
+                    this._syncIndicator();
                     this._indicator.notifySessionUpdated(session);
                 }
             },
@@ -62,6 +78,7 @@ export default class WatchAIExtension extends Extension {
                     if (this._indicator.popover) {
                         this._indicator.popover.updateSession(session);
                     }
+                    this._syncIndicator();
                     this._indicator.notifySessionUpdated(session);
                 }
             },
@@ -70,6 +87,7 @@ export default class WatchAIExtension extends Extension {
                     if (this._indicator.popover) {
                         this._indicator.popover.removeSession(sessionId);
                     }
+                    this._syncIndicator();
                     this._indicator.notifySessionRemoved(sessionId);
                 }
             },

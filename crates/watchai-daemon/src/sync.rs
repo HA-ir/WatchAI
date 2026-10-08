@@ -21,9 +21,7 @@ pub async fn sync_aggregate_state(
     let new_dto = AggregateStateDto {
         state: calc.aggregate_state.to_string(),
         active_session_count: calc.active_session_count,
-        working_session_count: calc.working_session_count,
         waiting_session_count: calc.waiting_session_count,
-        success_session_count: calc.success_session_count,
         error_session_count: calc.error_session_count,
         updated_at: now.to_rfc3339(),
     };
@@ -32,9 +30,7 @@ pub async fn sync_aggregate_state(
         let current = aggregate_lock.read().await;
         current.state != new_dto.state
             || current.active_session_count != new_dto.active_session_count
-            || current.working_session_count != new_dto.working_session_count
             || current.waiting_session_count != new_dto.waiting_session_count
-            || current.success_session_count != new_dto.success_session_count
             || current.error_session_count != new_dto.error_session_count
     };
 
@@ -60,9 +56,7 @@ mod tests {
         let initial_dto = AggregateStateDto {
             state: "IDLE".to_string(),
             active_session_count: 0,
-            working_session_count: 0,
             waiting_session_count: 0,
-            success_session_count: 0,
             error_session_count: 0,
             updated_at: Utc::now().to_rfc3339(),
         };

@@ -127,7 +127,7 @@ async fn test_scenario4_worker_crash_and_liveness_hysteresis() {
     );
 
     // 6. Verify aggregate state also transitioned to ERROR
-    let (agg_state, active, _, _, _, error_count, _) = proxy
+    let (agg_state, active, _, error_count, _) = proxy
         .get_aggregate_state()
         .await
         .expect("GetAggregateState call failed after crash");

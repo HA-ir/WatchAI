@@ -20,7 +20,7 @@ All interactions are strictly local to the user's desktop session. Communication
 ### 2.1 `GetAggregateState`
 Returns the current computed desktop-wide state and session counters.
 
-- **Direction**: In: None $\rightarrow$ Out: `(state: String, active_session_count: u32, working_session_count: u32, waiting_session_count: u32, success_session_count: u32, error_session_count: u32, updated_at: String)`
+- **Direction**: In: None $\rightarrow$ Out: `(state: String, active_session_count: u32, waiting_session_count: u32, error_session_count: u32, updated_at: String)`
 - **Behavior**: Fast in-memory lookup. Returns immediately (<5ms).
 
 ### 2.2 `GetSessions`
@@ -50,9 +50,9 @@ Fetches a single session record by its unique `session_id`.
 
 ### 3.1 `AggregateStateChanged`
 Emitted immediately whenever the aggregate state or active counters change.
-- **Payload**: `(state: String, active_session_count: u32, working_session_count: u32, waiting_session_count: u32, success_session_count: u32, error_session_count: u32, updated_at: String)`
+- **Payload**: `(state: String, active_session_count: u32, waiting_session_count: u32, error_session_count: u32, updated_at: String)`
 - **Client Action**: GNOME Shell extension updates the top-bar icon, badge, and accessibility description.
-- **Throttling Invariant**: Emitted **only** when `state`, `active_session_count`, `working_session_count`, `waiting_session_count`, `success_session_count`, or `error_session_count` changes. Intermediate heartbeats, timestamp updates, and background liveness ticks that leave the state and counters unchanged are suppressed to prevent desktop compositor redraw storms.
+- **Throttling Invariant**: Emitted **only** when `state`, `active_session_count`, `waiting_session_count`, or `error_session_count` changes. Intermediate heartbeats, timestamp updates, and background liveness ticks that leave the state and counters unchanged are suppressed to prevent desktop compositor redraw storms.
 
 ### 3.2 `SessionAdded`
 Emitted when a new agent session is discovered or initiated.

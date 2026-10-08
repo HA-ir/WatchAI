@@ -191,7 +191,7 @@ async fn test_scenario2_mock_session_lifecycle_and_sixty_second_dwell() {
     let poll_deadline = Duration::from_secs(66); // 60s dwell + 6s timing tolerance margin
 
     while dwell_start.elapsed() < poll_deadline {
-        let (state, active, _, _, _, _, _) = proxy.get_aggregate_state().await.unwrap();
+        let (state, active, _, _, _) = proxy.get_aggregate_state().await.unwrap();
         if state == "IDLE" {
             let elapsed = dwell_start.elapsed();
             assert!(

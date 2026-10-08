@@ -12,9 +12,7 @@ async fn test_dbus_service_initial_state() {
     let r = agg.read().await;
     assert_eq!(r.state, "IDLE");
     assert_eq!(r.active_session_count, 0);
-    assert_eq!(r.working_session_count, 0);
     assert_eq!(r.waiting_session_count, 0);
-    assert_eq!(r.success_session_count, 0);
     assert_eq!(r.error_session_count, 0);
 }
 

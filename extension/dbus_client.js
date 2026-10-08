@@ -13,9 +13,7 @@ const WatchAIDbusInterface = `
     <method name="GetAggregateState">
       <arg name="state" type="s" direction="out" />
       <arg name="active_session_count" type="u" direction="out" />
-      <arg name="working_session_count" type="u" direction="out" />
       <arg name="waiting_session_count" type="u" direction="out" />
-      <arg name="success_session_count" type="u" direction="out" />
       <arg name="error_session_count" type="u" direction="out" />
       <arg name="updated_at" type="s" direction="out" />
     </method>
@@ -29,9 +27,7 @@ const WatchAIDbusInterface = `
     <signal name="AggregateStateChanged">
       <arg name="state" type="s" />
       <arg name="active_session_count" type="u" />
-      <arg name="working_session_count" type="u" />
       <arg name="waiting_session_count" type="u" />
-      <arg name="success_session_count" type="u" />
       <arg name="error_session_count" type="u" />
       <arg name="updated_at" type="s" />
     </signal>
@@ -183,13 +179,11 @@ export class WatchAIDbusClient {
                 return;
             }
 
-            const [state, activeCount, workingCount, waitingCount, successCount, errorCount, updatedAt] = aggResult;
+            const [state, activeCount, waitingCount, errorCount, updatedAt] = aggResult;
             const aggregatePayload = {
                 state: String(state || 'IDLE'),
                 activeCount: Number(activeCount) || 0,
-                workingCount: Number(workingCount) || 0,
                 waitingCount: Number(waitingCount) || 0,
-                successCount: Number(successCount) || 0,
                 errorCount: Number(errorCount) || 0,
                 updatedAt: String(updatedAt || ''),
             };
@@ -233,13 +227,11 @@ export class WatchAIDbusClient {
         // Listen for AggregateStateChanged signal
         this._signalId = this._proxy.connectSignal('AggregateStateChanged', (_proxy, _sender, params) => {
             if (this._callbacks.onAggregateStateChanged && params) {
-                const [state, activeCount, workingCount, waitingCount, successCount, errorCount, updatedAt] = params;
+                const [state, activeCount, waitingCount, errorCount, updatedAt] = params;
                 this._callbacks.onAggregateStateChanged({
                     state: String(state || 'IDLE'),
                     activeCount: Number(activeCount) || 0,
-                    workingCount: Number(workingCount) || 0,
                     waitingCount: Number(waitingCount) || 0,
-                    successCount: Number(successCount) || 0,
                     errorCount: Number(errorCount) || 0,
                     updatedAt: String(updatedAt || ''),
                 });
@@ -327,13 +319,11 @@ export class WatchAIDbusClient {
         this._proxy.GetAggregateStateRemote((result, error) => {
             if (error || !result) return;
             if (this._callbacks.onAggregateStateChanged) {
-                const [state, activeCount, workingCount, waitingCount, successCount, errorCount, updatedAt] = result;
+                const [state, activeCount, waitingCount, errorCount, updatedAt] = result;
                 this._callbacks.onAggregateStateChanged({
                     state: String(state || 'IDLE'),
                     activeCount: Number(activeCount) || 0,
-                    workingCount: Number(workingCount) || 0,
                     waitingCount: Number(waitingCount) || 0,
-                    successCount: Number(successCount) || 0,
                     errorCount: Number(errorCount) || 0,
                     updatedAt: String(updatedAt || ''),
                 });

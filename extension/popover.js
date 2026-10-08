@@ -307,6 +307,10 @@ export class WatchAISessionPopover {
         }
     }
 
+    getSessions() {
+        return Array.from(this._cards.values()).map(c => c.session);
+    }
+
     setSessions(sessions) {
         // Clear existing cards and replace with fresh authoritative state
         for (const card of this._cards.values()) {
