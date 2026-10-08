@@ -81,23 +81,25 @@ class WatchAIIndicator extends PanelMenu.Button {
         });
         this._auxWaitingLabel = new St.Label({
             text: '',
+            style_class: 'watchai-aux-label',
             y_align: Clutter.ActorAlign.CENTER,
         });
         this._auxWaitingBox.add_child(this._auxWaitingIcon);
         this._auxWaitingBox.add_child(this._auxWaitingLabel);
 
-        // 2. Auxiliary Working Badge (Spinner)
+        // 2. Auxiliary Working Badge (Play/Executing)
         this._auxWorkingBox = new St.BoxLayout({
             style_class: 'watchai-status-group watchai-aux-badge',
             y_align: Clutter.ActorAlign.CENTER,
             visible: false,
         });
         this._auxWorkingIcon = new St.Icon({
-            icon_name: 'system-run-symbolic',
+            icon_name: 'media-playback-start-symbolic',
             style_class: 'system-status-icon watchai-status-icon watchai-icon-symbolic watchai-state-working',
         });
         this._auxWorkingLabel = new St.Label({
             text: '',
+            style_class: 'watchai-aux-label',
             y_align: Clutter.ActorAlign.CENTER,
         });
         this._auxWorkingBox.add_child(this._auxWorkingIcon);
@@ -115,6 +117,7 @@ class WatchAIIndicator extends PanelMenu.Button {
         });
         this._auxSuccessLabel = new St.Label({
             text: '',
+            style_class: 'watchai-aux-label',
             y_align: Clutter.ActorAlign.CENTER,
         });
         this._auxSuccessBox.add_child(this._auxSuccessIcon);
@@ -132,6 +135,7 @@ class WatchAIIndicator extends PanelMenu.Button {
         });
         this._auxErrorLabel = new St.Label({
             text: '',
+            style_class: 'watchai-aux-label',
             y_align: Clutter.ActorAlign.CENTER,
         });
         this._auxErrorBox.add_child(this._auxErrorIcon);
@@ -239,15 +243,15 @@ class WatchAIIndicator extends PanelMenu.Button {
             let primaryState = 'WORKING';
             let primaryCount = effectiveWorking;
 
-            if (hasWorking) {
-                primaryState = 'WORKING';
-                primaryCount = effectiveWorking;
+            if (hasError) {
+                primaryState = 'ERROR';
+                primaryCount = effectiveError;
             } else if (hasWaiting) {
                 primaryState = 'WAITING';
                 primaryCount = effectiveWaiting;
-            } else if (hasError) {
-                primaryState = 'ERROR';
-                primaryCount = effectiveError;
+            } else if (hasWorking) {
+                primaryState = 'WORKING';
+                primaryCount = effectiveWorking;
             } else if (hasSuccess) {
                 primaryState = 'SUCCESS';
                 primaryCount = effectiveSuccess;

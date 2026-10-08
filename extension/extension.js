@@ -61,7 +61,16 @@ export default class WatchAIExtension extends Extension {
             },
             onAggregateStateChanged: (agg) => {
                 if (this._indicator) {
-                    this._syncIndicator(agg ? agg.state : null, agg ? agg.activeCount : null);
+                    if (this._dbusClient && typeof this._dbusClient.fetchSessions === 'function') {
+                        this._dbusClient.fetchSessions((sessions) => {
+                            if (this._indicator && this._indicator.popover && Array.isArray(sessions)) {
+                                this._indicator.popover.setSessions(sessions);
+                            }
+                            this._syncIndicator(agg ? agg.state : null, agg ? agg.activeCount : null);
+                        });
+                    } else {
+                        this._syncIndicator(agg ? agg.state : null, agg ? agg.activeCount : null);
+                    }
                 }
             },
             onSessionAdded: (session) => {
