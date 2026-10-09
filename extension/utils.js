@@ -1,3 +1,4 @@
+import Atspi from 'gi://Atspi';
 import GLib from 'gi://GLib';
 
 export function formatDuration(startedAtIso) {
@@ -156,9 +157,114 @@ export function sanitizeProjectName(rawName) {
 }
 
 /**
+ * Searches running terminal applications via AT-SPI accessibility tree to locate
+ * the specific notebook tab and window corresponding to a project name and ancestor PIDs.
+ * Returns an object with window reference and tab index if found, or null.
+ */
+export function findTerminalTabMatch(cleanProj, pids = new Set(), desktopOverride = null) {
+    if (!cleanProj || typeof cleanProj !== 'string') return null;
+    let target = cleanProj.toLowerCase().trim();
+    if (target.includes('/') || target.includes('\\')) {
+        const parts = target.split(/[/\\]/);
+        target = parts[parts.length - 1] || target;
+    }
+    if (!target) return null;
+
+    try {
+        let desktop = desktopOverride;
+        if (!desktop) {
+            if (typeof Atspi === 'undefined' || typeof Atspi.get_desktop !== 'function') {
+                return null;
+            }
+            desktop = Atspi.get_desktop(0);
+        }
+        if (!desktop) return null;
+
+        function findTabList(obj, depth = 0) {
+            if (!obj || depth > 8) return null;
+            try {
+                if (obj.get_role_name() === 'page tab list') return obj;
+                const count = obj.get_child_count();
+                for (let i = 0; i < count; i++) {
+                    const child = obj.get_child_at_index(i);
+                    const found = findTabList(child, depth + 1);
+                    if (found) return found;
+                }
+            } catch (_) {}
+            return null;
+        }
+
+        const appCount = desktop.get_child_count();
+        let bestMatch = null;
+        let bestScore = 0;
+
+        for (let i = 0; i < appCount; i++) {
+            const app = desktop.get_child_at_index(i);
+            if (!app) continue;
+            const appName = (app.get_name() || '').toLowerCase();
+            let appPid = 0;
+            try {
+                if (typeof app.get_process_id === 'function') {
+                    appPid = app.get_process_id();
+                }
+            } catch (_) {}
+
+            const isAncestorPid = (appPid > 0 && pids.has(appPid));
+            const isTermApp = appName.includes('terminal') || appName.includes('ptyxis') || appName.includes('console');
+            if (!isAncestorPid && !isTermApp) continue;
+
+            const winCount = app.get_child_count();
+            for (let w = 0; w < winCount; w++) {
+                const win = app.get_child_at_index(w);
+                if (!win) continue;
+                const tl = findTabList(win);
+                if (!tl) continue;
+
+                const tabCount = tl.get_child_count();
+                for (let t = 0; t < tabCount; t++) {
+                    const tab = tl.get_child_at_index(t);
+                    if (!tab) continue;
+                    const tabName = (tab.get_name() || '').toLowerCase();
+                    let score = 0;
+
+                    if (tabName.includes(target)) {
+                        score += 100;
+                        if (isAncestorPid) score += 50;
+                        // Prioritize active agent tabs with lifecycle indicator emojis/symbols
+                        if (/[◐◑◒◓✳✓⚙▶■•●]/.test(tabName)) {
+                            score += 50;
+                        }
+                        // Boundary match: starts or ends with project name
+                        if (tabName.startsWith(target) || tabName.endsWith(target)) {
+                            score += 20;
+                        }
+                    }
+
+                    if (score > bestScore) {
+                        bestScore = score;
+                        bestMatch = {
+                            appPid,
+                            winName: (win.get_name() || '').toLowerCase(),
+                            tabList: tl,
+                            tabIndex: t,
+                            tabName: tab.get_name() || '',
+                        };
+                    }
+                }
+            }
+        }
+        return bestMatch;
+    } catch (e) {
+        console.warn('WatchAI: Failed AT-SPI tab list inspection:', e);
+        return null;
+    }
+}
+
+/**
  * Focuses the desktop window associated with an agent session or process ID.
  * Traverses process ancestors to identify terminal emulators or host containers,
- * prioritizing exact project title matches across terminal windows.
+ * prioritizing exact project title matches across terminal windows and activating
+ * the specific notebook tab in multi-tab terminals.
  */
 export function activateWindowForProcess(sessionOrPid, projectNameOverride = '') {
     let pid = 0;
@@ -207,7 +313,14 @@ export function activateWindowForProcess(sessionOrPid, projectNameOverride = '')
     try {
         const windowActors = global.get_window_actors();
         const termKeywords = ['term', 'ptyxis', 'kitty', 'alacritty', 'konsole', 'xterm', 'code', 'vscodium', 'cursor'];
-        const cleanProj = (projectName || '').toLowerCase().trim();
+        let cleanProj = (projectName || '').toLowerCase().trim();
+        if (cleanProj.includes('/') || cleanProj.includes('\\')) {
+            const parts = cleanProj.split(/[/\\]/);
+            cleanProj = parts[parts.length - 1] || cleanProj;
+        }
+
+        // 1. Probe AT-SPI for terminal tabs matching project name and ancestor PIDs
+        const tabMatch = findTerminalTabMatch(cleanProj, pids);
 
         let bestWindow = null;
         let bestScore = 0;
@@ -226,6 +339,13 @@ export function activateWindowForProcess(sessionOrPid, projectNameOverride = '')
             const hasProject = cleanProj.length > 0 && wTitle.includes(cleanProj);
 
             let score = 0;
+
+            // Highest priority: AT-SPI identified this window as housing the matching project tab!
+            if (tabMatch && (wPid === tabMatch.appPid || isAncestor || isTerm)) {
+                if (tabMatch.winName && (wTitle === tabMatch.winName || wTitle.includes(tabMatch.winName) || tabMatch.winName.includes(wTitle))) {
+                    score += 20000;
+                }
+            }
 
             if (isDirect) {
                 score += 10000;
@@ -264,6 +384,16 @@ export function activateWindowForProcess(sessionOrPid, projectNameOverride = '')
             if (typeof globalThis.Main !== 'undefined' && typeof globalThis.Main.activateWindow === 'function') {
                 globalThis.Main.activateWindow(bestWindow);
             }
+
+            // 2. Activate the matching tab in multi-tab terminals
+            if (tabMatch && tabMatch.tabList && typeof tabMatch.tabList.select_child === 'function') {
+                try {
+                    tabMatch.tabList.select_child(tabMatch.tabIndex);
+                } catch (tabErr) {
+                    console.warn('WatchAI: Failed to activate terminal tab index ' + tabMatch.tabIndex, tabErr);
+                }
+            }
+
             return true;
         }
     } catch (e) {
