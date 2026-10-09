@@ -157,17 +157,38 @@ export function sanitizeProjectName(rawName) {
 }
 
 /**
+ * Extracts the base project or directory name from terminal window titles,
+ * tab labels, or prompt strings (e.g. "hossein@ubuntu:~/Projects/WatchAI" -> "watchai",
+ * "◐ watchai" -> "watchai", "Projects" -> "projects").
+ */
+export function extractProjectFromTitle(title) {
+    if (!title || typeof title !== 'string') return '';
+    let s = title.trim();
+    // 1. Strip leading status emojis, runes, or symbols
+    s = s.replace(/^[◐◑◒◓✳✓⚙▶■•●\s]+/, '').trim();
+    // 2. If contains user@host:path, isolate path segment
+    if (s.includes(':')) {
+        const colonIdx = s.indexOf(':');
+        s = s.substring(colonIdx + 1).trim();
+    }
+    // 3. Strip trailing slashes
+    s = s.replace(/[/\\\\]+$/, '');
+    // 4. Extract last path component
+    if (s.includes('/') || s.includes('\\')) {
+        const parts = s.split(/[/\\\\]/);
+        s = parts[parts.length - 1] || s;
+    }
+    return s.toLowerCase().trim();
+}
+
+/**
  * Searches running terminal applications via AT-SPI accessibility tree to locate
  * the specific notebook tab and window corresponding to a project name and ancestor PIDs.
  * Returns an object with window reference and tab index if found, or null.
  */
 export function findTerminalTabMatch(cleanProj, pids = new Set(), desktopOverride = null) {
     if (!cleanProj || typeof cleanProj !== 'string') return null;
-    let target = cleanProj.toLowerCase().trim();
-    if (target.includes('/') || target.includes('\\')) {
-        const parts = target.split(/[/\\]/);
-        target = parts[parts.length - 1] || target;
-    }
+    let target = extractProjectFromTitle(cleanProj);
     if (!target) return null;
 
     try {
@@ -217,37 +238,60 @@ export function findTerminalTabMatch(cleanProj, pids = new Set(), desktopOverrid
             for (let w = 0; w < winCount; w++) {
                 const win = app.get_child_at_index(w);
                 if (!win) continue;
+                const winTitle = win.get_name() || '';
+                const extractedWinProj = extractProjectFromTitle(winTitle);
                 const tl = findTabList(win);
-                if (!tl) continue;
 
-                const tabCount = tl.get_child_count();
-                for (let t = 0; t < tabCount; t++) {
-                    const tab = tl.get_child_at_index(t);
-                    if (!tab) continue;
-                    const tabName = (tab.get_name() || '').toLowerCase();
+                // Handle single-tab windows or windows where tab labels are collapsed into title
+                if (!tl || tl.get_child_count() <= 1) {
                     let score = 0;
-
-                    if (tabName.includes(target)) {
-                        score += 100;
+                    if (extractedWinProj === target) {
+                        score += 200;
                         if (isAncestorPid) score += 50;
-                        // Prioritize active agent tabs with lifecycle indicator emojis/symbols
-                        if (/[◐◑◒◓✳✓⚙▶■•●]/.test(tabName)) {
-                            score += 50;
-                        }
-                        // Boundary match: starts or ends with project name
-                        if (tabName.startsWith(target) || tabName.endsWith(target)) {
-                            score += 20;
-                        }
+                        if (/[◐◑◒◓✳✓⚙▶■•●]/.test(winTitle)) score += 50;
+                    } else if (extractedWinProj.length > 0 && (extractedWinProj.includes(target) || target.includes(extractedWinProj))) {
+                        score += 80;
                     }
 
                     if (score > bestScore) {
                         bestScore = score;
                         bestMatch = {
                             appPid,
-                            winName: (win.get_name() || '').toLowerCase(),
+                            winName: winTitle.toLowerCase(),
+                            tabList: tl,
+                            tabIndex: 0,
+                            tabName: winTitle,
+                        };
+                    }
+                    continue;
+                }
+
+                const tabCount = tl.get_child_count();
+                for (let t = 0; t < tabCount; t++) {
+                    const tab = tl.get_child_at_index(t);
+                    if (!tab) continue;
+                    const tabName = tab.get_name() || winTitle || '';
+                    const extractedTabProj = extractProjectFromTitle(tabName);
+                    let score = 0;
+
+                    if (extractedTabProj === target) {
+                        score += 200;
+                        if (isAncestorPid) score += 50;
+                        if (/[◐◑◒◓✳✓⚙▶■•●]/.test(tabName)) {
+                            score += 50;
+                        }
+                    } else if (extractedTabProj.length > 0 && (extractedTabProj.includes(target) || target.includes(extractedTabProj))) {
+                        score += 80;
+                    }
+
+                    if (score > bestScore) {
+                        bestScore = score;
+                        bestMatch = {
+                            appPid,
+                            winName: winTitle.toLowerCase(),
                             tabList: tl,
                             tabIndex: t,
-                            tabName: tab.get_name() || '',
+                            tabName: tabName,
                         };
                     }
                 }
@@ -313,11 +357,7 @@ export function activateWindowForProcess(sessionOrPid, projectNameOverride = '')
     try {
         const windowActors = global.get_window_actors();
         const termKeywords = ['term', 'ptyxis', 'kitty', 'alacritty', 'konsole', 'xterm', 'code', 'vscodium', 'cursor'];
-        let cleanProj = (projectName || '').toLowerCase().trim();
-        if (cleanProj.includes('/') || cleanProj.includes('\\')) {
-            const parts = cleanProj.split(/[/\\]/);
-            cleanProj = parts[parts.length - 1] || cleanProj;
-        }
+        const cleanProj = extractProjectFromTitle(projectName);
 
         // 1. Probe AT-SPI for terminal tabs matching project name and ancestor PIDs
         const tabMatch = findTerminalTabMatch(cleanProj, pids);
@@ -332,17 +372,18 @@ export function activateWindowForProcess(sessionOrPid, projectNameOverride = '')
             const wPid = metaWindow.get_pid();
             const wTitle = (metaWindow.get_title() || '').toLowerCase();
             const wmClass = (metaWindow.get_wm_class() || '').toLowerCase();
+            const extractedWinProj = extractProjectFromTitle(wTitle);
 
             const isDirect = (wPid === pid);
             const isAncestor = pids.has(wPid);
             const isTerm = termKeywords.some(k => wmClass.includes(k));
-            const hasProject = cleanProj.length > 0 && wTitle.includes(cleanProj);
+            const hasProject = cleanProj.length > 0 && (extractedWinProj === cleanProj || extractedWinProj.includes(cleanProj));
 
             let score = 0;
 
             // Highest priority: AT-SPI identified this window as housing the matching project tab!
             if (tabMatch && (wPid === tabMatch.appPid || isAncestor || isTerm)) {
-                if (tabMatch.winName && (wTitle === tabMatch.winName || wTitle.includes(tabMatch.winName) || tabMatch.winName.includes(wTitle))) {
+                if (tabMatch.winName && (wTitle === tabMatch.winName || extractProjectFromTitle(wTitle) === extractProjectFromTitle(tabMatch.winName))) {
                     score += 20000;
                 }
             }
@@ -386,7 +427,7 @@ export function activateWindowForProcess(sessionOrPid, projectNameOverride = '')
             }
 
             // 2. Activate the matching tab in multi-tab terminals
-            if (tabMatch && tabMatch.tabList && typeof tabMatch.tabList.select_child === 'function') {
+            if (tabMatch && tabMatch.tabList && typeof tabMatch.tabList.select_child === 'function' && tabMatch.tabIndex >= 0) {
                 try {
                     tabMatch.tabList.select_child(tabMatch.tabIndex);
                 } catch (tabErr) {

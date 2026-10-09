@@ -1,6 +1,7 @@
 import {
     activateWindowForProcess,
     computeBackoffDelay,
+    extractProjectFromTitle,
     findTerminalTabMatch,
     formatDuration,
     getStatePriority,
@@ -14,7 +15,21 @@ function assert(condition, message) {
     }
 }
 
-// 1. findTerminalTabMatch input edge cases
+// 1. extractProjectFromTitle unit tests
+{
+    assert(extractProjectFromTitle('◐ watchai') === 'watchai', 'Should strip status runes');
+    assert(extractProjectFromTitle('✳ anbar') === 'anbar', 'Should strip status runes');
+    assert(extractProjectFromTitle('hossein@ubuntu:~/Projects/WatchAI') === 'watchai', 'Should isolate leaf dir from prompt');
+    assert(extractProjectFromTitle('hossein@ubuntu:~/Projects/Anbar') === 'anbar', 'Should isolate leaf dir from prompt');
+    assert(extractProjectFromTitle('hossein@ubuntu:~/Projects') === 'projects', 'Should extract projects from prompt');
+    assert(extractProjectFromTitle('Projects') === 'projects', 'Should extract plain title');
+    assert(extractProjectFromTitle('/home/user/work/my-app/') === 'my-app', 'Should extract trailing slash path');
+    assert(extractProjectFromTitle('') === '', 'Empty string returns empty');
+    assert(extractProjectFromTitle(null) === '', 'Null returns empty');
+    console.log('✓ extractProjectFromTitle parses project names cleanly across prompt styles.');
+}
+
+// 2. findTerminalTabMatch input edge cases
 {
     assert(findTerminalTabMatch(null) === null, 'null project name should return null');
     assert(findTerminalTabMatch('') === null, 'empty project name should return null');
@@ -23,7 +38,7 @@ function assert(condition, message) {
     console.log('✓ findTerminalTabMatch rejects invalid inputs safely.');
 }
 
-// 2. Mock AT-SPI tree for multi-tab matching verification
+// 3. Mock AT-SPI tree for multi-tab matching verification
 {
     class MockTab {
         constructor(name) {
@@ -73,6 +88,7 @@ function assert(condition, message) {
         get_child_at_index(idx) { return this._windows[idx]; }
     }
 
+    // Window 0: Multi-tab terminal with WatchAI, Anbar, and generic desktop
     const tabList1 = new MockTabList([
         new MockTab('hossein@ubuntu:~/Desktop'),
         new MockTab('◑ watchai'),
@@ -80,34 +96,41 @@ function assert(condition, message) {
         new MockTab('✳ anbar'),
     ]);
     const win1 = new MockWindow('hossein@ubuntu:~/Desktop', tabList1);
-    const termApp = new MockApp('gnome-terminal-server', 60200, [win1]);
+
+    // Window 1: Standalone terminal window titled "Projects" (e.g. for Codex)
+    const tabList2 = new MockTabList([
+        new MockTab(''),
+    ]);
+    const win2 = new MockWindow('Projects', tabList2);
+
+    const termApp = new MockApp('gnome-terminal-server', 60200, [win1, win2]);
 
     const mockDesktop = {
         get_child_count() { return 1; },
         get_child_at_index(idx) { return idx === 0 ? termApp : null; },
     };
 
+    // Test WatchAI match
     const matchWatchAI = findTerminalTabMatch('WatchAI', new Set([60200]), mockDesktop);
     assert(matchWatchAI !== null, 'Should find matching tab for WatchAI');
     assert(matchWatchAI.tabIndex === 1, `Expected tab index 1 (◑ watchai), got ${matchWatchAI.tabIndex}`);
-    assert(matchWatchAI.winName === 'hossein@ubuntu:~/desktop', 'Expected window name match');
-
-    // Test tab selection
-    matchWatchAI.tabList.select_child(matchWatchAI.tabIndex);
-    assert(tabList1.selectedChild === 1, 'MockTabList should record selected child 1');
+    assert(matchWatchAI.winName === 'hossein@ubuntu:~/desktop', 'Expected win1 match');
 
     // Test Anbar match
     const matchAnbar = findTerminalTabMatch('/home/hossein/Projects/Anbar', new Set([60200]), mockDesktop);
     assert(matchAnbar !== null, 'Should find matching tab for Anbar from full path');
     assert(matchAnbar.tabIndex === 3, `Expected tab index 3 (✳ anbar), got ${matchAnbar.tabIndex}`);
 
-    matchAnbar.tabList.select_child(matchAnbar.tabIndex);
-    assert(tabList1.selectedChild === 3, 'MockTabList should record selected child 3');
+    // Critical test: Projects (Codex) must match win2 ("Projects"), NOT win1's "~/Projects/WatchAI" tab!
+    const matchProjects = findTerminalTabMatch('Projects', new Set([60200]), mockDesktop);
+    assert(matchProjects !== null, 'Should find match for Projects');
+    assert(matchProjects.winName === 'projects', `Expected win2 (projects), got ${matchProjects.winName}`);
+    assert(matchProjects.tabIndex === 0, `Expected tab index 0, got ${matchProjects.tabIndex}`);
 
-    console.log('✓ AT-SPI tab list matching prioritizes active agent tab with symbols.');
+    console.log('✓ AT-SPI tab list matching prioritizes active agent tabs and isolates parent directories.');
 }
 
-// 3. Mock activateWindowForProcess window scoring and tab switching
+// 4. Mock activateWindowForProcess window scoring and tab switching
 {
     class MockMetaWindow {
         constructor(pid, title, wmClass) {
@@ -149,20 +172,19 @@ function assert(condition, message) {
         activateWindow: (win) => { globalThis.Main.activatedWindow = win; },
     };
 
-    // Session for Anbar running under gnome-terminal-server (PID 60200)
-    const session = {
-        processId: 165238, // Claude process PID
-        projectName: 'Anbar',
+    // Session for Codex running in "Projects" under gnome-terminal-server
+    const codexSession = {
+        processId: 575764,
+        projectName: 'Projects',
     };
 
-    // winA houses the tab for Anbar!
-    const result = activateWindowForProcess(session);
-    assert(result === true, 'activateWindowForProcess should succeed');
-    assert(winA.activated === true, 'winA should be activated because it houses Anbar tab');
-    assert(winA.get_workspace().activated === true, 'winA workspace should be activated');
-    assert(globalThis.Main.activatedWindow === winA, 'Main.activateWindow should target winA');
+    const result = activateWindowForProcess(codexSession);
+    assert(result === true, 'activateWindowForProcess should succeed for Codex');
+    assert(winB.activated === true, 'winB ("Projects") should be activated for Codex session');
+    assert(winB.get_workspace().activated === true, 'winB workspace should be activated');
+    assert(globalThis.Main.activatedWindow === winB, 'Main.activateWindow should target winB');
 
-    console.log('✓ activateWindowForProcess selects and raises terminal window containing target tab.');
+    console.log('✓ activateWindowForProcess correctly targets the dedicated Projects window for Codex.');
 }
 
-console.log('\nAll utils and tab-switching GJS tests passed successfully!');
+console.log('\nAll utils, extraction, and tab-switching GJS tests passed successfully!');
