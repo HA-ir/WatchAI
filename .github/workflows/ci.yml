@@ -46,6 +46,7 @@ jobs:
             libglib2.0-dev \
             libglib2.0-bin \
             gjs \
+            gir1.2-atspi-2.0 \
             dbus \
             dbus-x11 \
             python3 \

@@ -1,5 +1,13 @@
-import Atspi from 'gi://Atspi';
 import GLib from 'gi://GLib';
+
+let Atspi = null;
+try {
+    const mod = await import('gi://Atspi');
+    Atspi = mod.default || mod;
+} catch (_) {
+    // AT-SPI typelib may not be present in minimal/headless environments;
+    // degrade gracefully so core utility functions remain importable.
+}
 
 export function formatDuration(startedAtIso) {
     if (!startedAtIso) return '00:00';
