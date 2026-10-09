@@ -25,8 +25,11 @@ export class WatchAISessionCard {
         });
 
         if (typeof this._onActivate === 'function') {
-            this.actor.connect('button-press-event', () => {
+            this.actor.connect('button-press-event', (_actor, event) => {
                 if (!this._isOffline) {
+                    if (event && typeof event.get_button === 'function' && event.get_button() !== 1) {
+                        return Clutter.EVENT_PROPAGATE;
+                    }
                     this._onActivate(this.session);
                 }
                 return Clutter.EVENT_STOP;
@@ -188,7 +191,6 @@ export class WatchAISessionPopover {
         this._cards = new Map(); // sessionId -> WatchAISessionCard
         this._durationTimerId = null;
         this._isOffline = false;
-        this._notifyChangedId = null;
 
         this._buildUI();
     }
@@ -242,33 +244,11 @@ export class WatchAISessionPopover {
         this._cardsSection = new PopupMenu.PopupMenuSection();
         this._menu.addMenuItem(this._cardsSection);
 
-        // Footer Section: Controls & Preferences
+        // Footer Section: Preferences
         this._footerSeparator = new PopupMenu.PopupSeparatorMenuItem();
         this._menu.addMenuItem(this._footerSeparator);
 
-        // 1. Notification Toggle Switch
-        const initialNotifyState = this._settings ? this._settings.getEnableNotifications() : true;
-        this._notifySwitchItem = new PopupMenu.PopupSwitchMenuItem(
-            'Desktop Notifications',
-            initialNotifyState
-        );
-        this._notifySwitchItem.connect('toggled', (_item, state) => {
-            if (this._settings) {
-                this._settings.setEnableNotifications(state);
-            }
-        });
-        this._menu.addMenuItem(this._notifySwitchItem);
-
-        // Sync switch state if GSettings change externally
-        if (this._settings && typeof this._settings.onChanged === 'function') {
-            this._notifyChangedId = this._settings.onChanged('enable-desktop-notifications', () => {
-                if (this._notifySwitchItem && this._settings) {
-                    this._notifySwitchItem.setToggleState(this._settings.getEnableNotifications());
-                }
-            });
-        }
-
-        // 2. Open Preferences Button
+        // Open Preferences Button
         this._settingsItem = new PopupMenu.PopupMenuItem('Extension Settings…');
         this._settingsItem.connect('activate', () => {
             if (this._menu) {
@@ -394,7 +374,7 @@ export class WatchAISessionPopover {
 
         const card = new WatchAISessionCard(session, (s) => {
             if (s && s.processId) {
-                const focused = activateWindowForProcess(s.processId);
+                const focused = activateWindowForProcess(s);
                 if (focused && this._menu) {
                     this._menu.close();
                 }
@@ -435,10 +415,6 @@ export class WatchAISessionPopover {
         if (this._openStateChangedId) {
             this._menu.disconnect(this._openStateChangedId);
             this._openStateChangedId = null;
-        }
-        if (this._settings && this._notifyChangedId) {
-            this._settings.disconnect(this._notifyChangedId);
-            this._notifyChangedId = null;
         }
         this._cards.clear();
     }

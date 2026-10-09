@@ -538,6 +538,17 @@ async fn run_daemon() -> Result<(), Box<dyn std::error::Error>> {
                                 bg_registry.upsert(s.clone()).await;
                                 let dto = SessionDto::from(&s);
                                 let _ = WatchAiDbusService::emit_session_updated(bg_iface.signal_context(), &dto).await;
+
+                                if let Some(agg_dto) = sync_aggregate_state(&bg_registry, &bg_agg, now).await {
+                                    let _ = WatchAiDbusService::emit_aggregate_state_changed(
+                                        bg_iface.signal_context(),
+                                        &agg_dto.state,
+                                        agg_dto.active_session_count,
+                                        agg_dto.waiting_session_count,
+                                        agg_dto.error_session_count,
+                                        &agg_dto.updated_at,
+                                    ).await;
+                                }
                             }
 
                             // Proactive Claude Code session reconciliation:
@@ -554,6 +565,17 @@ async fn run_daemon() -> Result<(), Box<dyn std::error::Error>> {
                                             bg_registry.upsert(s.clone()).await;
                                             let dto = SessionDto::from(&s);
                                             let _ = WatchAiDbusService::emit_session_updated(bg_iface.signal_context(), &dto).await;
+
+                                            if let Some(agg_dto) = sync_aggregate_state(&bg_registry, &bg_agg, now).await {
+                                                let _ = WatchAiDbusService::emit_aggregate_state_changed(
+                                                    bg_iface.signal_context(),
+                                                    &agg_dto.state,
+                                                    agg_dto.active_session_count,
+                                                    agg_dto.waiting_session_count,
+                                                    agg_dto.error_session_count,
+                                                    &agg_dto.updated_at,
+                                                ).await;
+                                            }
                                         }
                                     }
                                 }
