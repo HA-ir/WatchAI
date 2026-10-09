@@ -189,6 +189,19 @@ export function extractProjectFromTitle(title) {
     return s.toLowerCase().trim();
 }
 
+export function isAtspiAvailable() {
+    if (!Atspi || typeof Atspi.init !== 'function') return false;
+    try {
+        if (typeof Atspi.is_initialized === 'function' && Atspi.is_initialized()) {
+            return true;
+        }
+        const rc = Atspi.init();
+        return rc === 0 || rc === 1;
+    } catch (_) {
+        return false;
+    }
+}
+
 /**
  * Searches running terminal applications via AT-SPI accessibility tree to locate
  * the specific notebook tab and window corresponding to a project name and ancestor PIDs.
@@ -202,7 +215,7 @@ export function findTerminalTabMatch(cleanProj, pids = new Set(), desktopOverrid
     try {
         let desktop = desktopOverride;
         if (!desktop) {
-            if (typeof Atspi === 'undefined' || typeof Atspi.get_desktop !== 'function') {
+            if (!isAtspiAvailable() || typeof Atspi.get_desktop !== 'function') {
                 return null;
             }
             desktop = Atspi.get_desktop(0);
@@ -318,7 +331,7 @@ export function findTerminalTabMatch(cleanProj, pids = new Set(), desktopOverrid
  * prioritizing exact project title matches across terminal windows and activating
  * the specific notebook tab in multi-tab terminals.
  */
-export function activateWindowForProcess(sessionOrPid, projectNameOverride = '') {
+export function activateWindowForProcess(sessionOrPid, projectNameOverride = '', desktopOverride = null) {
     let pid = 0;
     let projectName = projectNameOverride;
 
@@ -368,7 +381,7 @@ export function activateWindowForProcess(sessionOrPid, projectNameOverride = '')
         const cleanProj = extractProjectFromTitle(projectName);
 
         // 1. Probe AT-SPI for terminal tabs matching project name and ancestor PIDs
-        const tabMatch = findTerminalTabMatch(cleanProj, pids);
+        const tabMatch = findTerminalTabMatch(cleanProj, pids, desktopOverride);
 
         let bestWindow = null;
         let bestScore = 0;

@@ -39,77 +39,77 @@ function assert(condition, message) {
 }
 
 // 3. Mock AT-SPI tree for multi-tab matching verification
+class MockTab {
+    constructor(name) {
+        this._name = name;
+    }
+    get_name() { return this._name; }
+    get_role_name() { return 'page tab'; }
+    get_child_count() { return 0; }
+    get_child_at_index() { return null; }
+}
+
+class MockTabList {
+    constructor(tabs) {
+        this._tabs = tabs;
+        this.selectedChild = -1;
+    }
+    get_role_name() { return 'page tab list'; }
+    get_child_count() { return this._tabs.length; }
+    get_child_at_index(idx) { return this._tabs[idx]; }
+    select_child(idx) {
+        this.selectedChild = idx;
+        return true;
+    }
+}
+
+class MockWindow {
+    constructor(name, tabList) {
+        this._name = name;
+        this._tabList = tabList;
+    }
+    get_name() { return this._name; }
+    get_role_name() { return 'frame'; }
+    get_child_count() { return this._tabList ? 1 : 0; }
+    get_child_at_index(idx) { return idx === 0 ? this._tabList : null; }
+}
+
+class MockApp {
+    constructor(name, pid, windows) {
+        this._name = name;
+        this._pid = pid;
+        this._windows = windows;
+    }
+    get_name() { return this._name; }
+    get_role_name() { return 'application'; }
+    get_process_id() { return this._pid; }
+    get_child_count() { return this._windows.length; }
+    get_child_at_index(idx) { return this._windows[idx]; }
+}
+
+// Window 0: Multi-tab terminal with WatchAI, Anbar, and generic desktop
+const tabList1 = new MockTabList([
+    new MockTab('hossein@ubuntu:~/Desktop'),
+    new MockTab('◑ watchai'),
+    new MockTab('hossein@ubuntu:~/Projects/WatchAI'),
+    new MockTab('✳ anbar'),
+]);
+const win1 = new MockWindow('hossein@ubuntu:~/Desktop', tabList1);
+
+// Window 1: Standalone terminal window titled "Projects" (e.g. for Codex)
+const tabList2 = new MockTabList([
+    new MockTab(''),
+]);
+const win2 = new MockWindow('Projects', tabList2);
+
+const termApp = new MockApp('gnome-terminal-server', 60200, [win1, win2]);
+
+const mockDesktop = {
+    get_child_count() { return 1; },
+    get_child_at_index(idx) { return idx === 0 ? termApp : null; },
+};
+
 {
-    class MockTab {
-        constructor(name) {
-            this._name = name;
-        }
-        get_name() { return this._name; }
-        get_role_name() { return 'page tab'; }
-        get_child_count() { return 0; }
-        get_child_at_index() { return null; }
-    }
-
-    class MockTabList {
-        constructor(tabs) {
-            this._tabs = tabs;
-            this.selectedChild = -1;
-        }
-        get_role_name() { return 'page tab list'; }
-        get_child_count() { return this._tabs.length; }
-        get_child_at_index(idx) { return this._tabs[idx]; }
-        select_child(idx) {
-            this.selectedChild = idx;
-            return true;
-        }
-    }
-
-    class MockWindow {
-        constructor(name, tabList) {
-            this._name = name;
-            this._tabList = tabList;
-        }
-        get_name() { return this._name; }
-        get_role_name() { return 'frame'; }
-        get_child_count() { return this._tabList ? 1 : 0; }
-        get_child_at_index(idx) { return idx === 0 ? this._tabList : null; }
-    }
-
-    class MockApp {
-        constructor(name, pid, windows) {
-            this._name = name;
-            this._pid = pid;
-            this._windows = windows;
-        }
-        get_name() { return this._name; }
-        get_role_name() { return 'application'; }
-        get_process_id() { return this._pid; }
-        get_child_count() { return this._windows.length; }
-        get_child_at_index(idx) { return this._windows[idx]; }
-    }
-
-    // Window 0: Multi-tab terminal with WatchAI, Anbar, and generic desktop
-    const tabList1 = new MockTabList([
-        new MockTab('hossein@ubuntu:~/Desktop'),
-        new MockTab('◑ watchai'),
-        new MockTab('hossein@ubuntu:~/Projects/WatchAI'),
-        new MockTab('✳ anbar'),
-    ]);
-    const win1 = new MockWindow('hossein@ubuntu:~/Desktop', tabList1);
-
-    // Window 1: Standalone terminal window titled "Projects" (e.g. for Codex)
-    const tabList2 = new MockTabList([
-        new MockTab(''),
-    ]);
-    const win2 = new MockWindow('Projects', tabList2);
-
-    const termApp = new MockApp('gnome-terminal-server', 60200, [win1, win2]);
-
-    const mockDesktop = {
-        get_child_count() { return 1; },
-        get_child_at_index(idx) { return idx === 0 ? termApp : null; },
-    };
-
     // Test WatchAI match
     const matchWatchAI = findTerminalTabMatch('WatchAI', new Set([60200]), mockDesktop);
     assert(matchWatchAI !== null, 'Should find matching tab for WatchAI');
@@ -178,7 +178,7 @@ function assert(condition, message) {
         projectName: 'Projects',
     };
 
-    const result = activateWindowForProcess(codexSession);
+    const result = activateWindowForProcess(codexSession, '', mockDesktop);
     assert(result === true, 'activateWindowForProcess should succeed for Codex');
     assert(winB.activated === true, 'winB ("Projects") should be activated for Codex session');
     assert(winB.get_workspace().activated === true, 'winB workspace should be activated');
