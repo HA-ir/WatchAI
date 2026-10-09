@@ -29,3 +29,4 @@ sha2 = "0.10"
 hex = "0.4"
 futures-util = "0.3"
 nix = { version = "0.29", features = ["process", "signal"] }
+tempfile = "3.10"

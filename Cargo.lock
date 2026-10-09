@@ -1239,6 +1239,7 @@ dependencies = [
  "nix",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
  "watchai-core",

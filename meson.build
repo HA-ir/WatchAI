@@ -63,6 +63,7 @@ extension_files = [
   'extension/metadata.json',
   'extension/notifications.js',
   'extension/popover.js',
+  'extension/prefs.js',
   'extension/settings.js',
   'extension/stylesheet.css',
   'extension/utils.js',

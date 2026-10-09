@@ -17,31 +17,22 @@ pub fn run_hook_forwarder(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let provider_id = provider_override.unwrap_or("claude-code").to_string();
 
-    // 1. Resolve PID from provider environment or parent PID
-    let pid: u32 = match provider_id.as_str() {
+    // 1. Resolve PID from hook payload (fallback to provider environment or parent PID)
+    // We defer final PID resolution until payload parsing if environment variables are not set.
+    let env_pid: u32 = match provider_id.as_str() {
         "opencode" => std::env::var("OPENCODE_PID")
             .ok()
             .and_then(|s| s.trim().parse().ok())
-            .unwrap_or_else(|| nix::unistd::getppid().as_raw() as u32),
+            .unwrap_or(0),
         "codex-cli" => std::env::var("CODEX_PID")
             .ok()
             .and_then(|s| s.trim().parse().ok())
-            .unwrap_or_else(|| nix::unistd::getppid().as_raw() as u32),
-        _ => {
-            let pid_str = match std::env::var("CLAUDE_PID") {
-                Ok(val) => val,
-                Err(_) => return Ok(()),
-            };
-            match pid_str.trim().parse() {
-                Ok(p) if p > 0 => p,
-                _ => return Ok(()),
-            }
-        }
+            .unwrap_or(0),
+        _ => std::env::var("CLAUDE_PID")
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or(0),
     };
-
-    if pid == 0 {
-        return Ok(());
-    }
 
     // 2. Read stdin up to MAX_HOOK_STDIN_BYTES
     let mut stdin_buf = Vec::with_capacity(2048);
@@ -56,6 +47,19 @@ pub fn run_hook_forwarder(
         Ok(v) => v,
         Err(_) => return Ok(()),
     };
+
+    // Resolve PID: prefer env_pid if valid (>0), otherwise check payload "pid", otherwise ppid
+    let pid = if env_pid > 0 {
+        env_pid
+    } else if let Some(p) = val.get("pid").and_then(|v| v.as_u64()).map(|p| p as u32) {
+        p
+    } else {
+        nix::unistd::getppid().as_raw() as u32
+    };
+
+    if pid == 0 {
+        return Ok(());
+    }
 
     let hook_event = match val
         .get("hook_event_name")

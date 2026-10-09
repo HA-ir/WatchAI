@@ -3,19 +3,38 @@ import St from 'gi://St';
 import Clutter from 'gi://Clutter';
 import GLib from 'gi://GLib';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
-import { formatDuration, getStatePriority, sanitizeProjectName } from './utils.js';
+import {
+    activateWindowForProcess,
+    formatDuration,
+    getStatePriority,
+    sanitizeProjectName,
+} from './utils.js';
 
 export { formatDuration, getStatePriority, sanitizeProjectName };
 
 export class WatchAISessionCard {
-    constructor(session) {
+    constructor(session, onActivate = null) {
         this.session = session;
         this._isOffline = false;
+        this._onActivate = onActivate;
         this.actor = new St.BoxLayout({
             vertical: true,
-            style_class: `watchai-session-card watchai-card-${session.currentState.toLowerCase()}`,
+            style_class: `watchai-session-card watchai-card-${session.currentState.toLowerCase()} watchai-session-card-interactive`,
             reactive: true,
+            track_hover: true,
         });
+
+        if (typeof this._onActivate === 'function') {
+            this.actor.connect('button-press-event', (_actor, event) => {
+                if (!this._isOffline) {
+                    if (event && typeof event.get_button === 'function' && event.get_button() !== 1) {
+                        return Clutter.EVENT_PROPAGATE;
+                    }
+                    this._onActivate(this.session);
+                }
+                return Clutter.EVENT_STOP;
+            });
+        }
 
         // Set AT-SPI role for session card: PANEL (T065, FR-025)
         // Prefer direct actor API, falling back defensively to get_accessible().set_role()
@@ -166,8 +185,9 @@ export class WatchAISessionCard {
 }
 
 export class WatchAISessionPopover {
-    constructor(menu) {
+    constructor(menu, settings = null) {
         this._menu = menu;
+        this._settings = settings;
         this._cards = new Map(); // sessionId -> WatchAISessionCard
         this._durationTimerId = null;
         this._isOffline = false;
@@ -223,6 +243,25 @@ export class WatchAISessionPopover {
         // Session Cards Section
         this._cardsSection = new PopupMenu.PopupMenuSection();
         this._menu.addMenuItem(this._cardsSection);
+
+        // Footer Section: Preferences
+        this._footerSeparator = new PopupMenu.PopupSeparatorMenuItem();
+        this._menu.addMenuItem(this._footerSeparator);
+
+        // Open Preferences Button
+        this._settingsItem = new PopupMenu.PopupMenuItem('Extension Settings…');
+        this._settingsItem.connect('activate', () => {
+            if (this._menu) {
+                this._menu.close();
+            }
+            try {
+                // Launch gnome-extensions prefs dialog
+                GLib.spawn_command_line_async('gnome-extensions prefs watchai@gnome.org');
+            } catch (e) {
+                console.warn('WatchAI: Failed to launch extension preferences:', e);
+            }
+        });
+        this._menu.addMenuItem(this._settingsItem);
 
         // Start/Stop duration timer on menu open/close
         this._openStateChangedId = this._menu.connect('open-state-changed', (_menu, isOpen) => {
@@ -333,7 +372,14 @@ export class WatchAISessionPopover {
             return;
         }
 
-        const card = new WatchAISessionCard(session);
+        const card = new WatchAISessionCard(session, (s) => {
+            if (s && s.processId) {
+                const focused = activateWindowForProcess(s);
+                if (focused && this._menu) {
+                    this._menu.close();
+                }
+            }
+        });
         if (this._isOffline) {
             card.setOfflineMode(true);
         }

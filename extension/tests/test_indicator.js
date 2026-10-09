@@ -1,6 +1,7 @@
 // Test for WatchAI GNOME Shell Indicator configuration and state mapping (Phase 10 - T133)
 
 import { STATE_CONFIG } from '../utils.js';
+import { SettingsManager, FallbackSettings } from '../settings.js';
 
 function assertEqual(actual, expected, message) {
     if (actual !== expected) {
@@ -104,6 +105,26 @@ try {
         print('✓ Multi-status badge coexisting category evaluation and a11y text verified.');
     }
     testMultiStatusBadgeLogic();
+
+    function testNotificationSettingsToggles() {
+        const mgr = new SettingsManager(new FallbackSettings());
+        assertEqual(mgr.getEnableNotifications(), true, 'Default notifications should be enabled');
+        assertEqual(mgr.setEnableNotifications(false), true, 'Setting notifications false should succeed');
+        assertEqual(mgr.getEnableNotifications(), false, 'Notifications should now be disabled');
+        assertEqual(mgr.setEnableNotifications(true), true, 'Setting notifications true should succeed');
+        assertEqual(mgr.getEnableNotifications(), true, 'Notifications should now be re-enabled');
+
+        assertEqual(mgr.getNotifyOnWaiting(), true, 'Default notify-on-waiting should be true');
+        assertEqual(mgr.setNotifyOnWaiting(false), true, 'Setting notify-on-waiting false should succeed');
+        assertEqual(mgr.getNotifyOnWaiting(), false, 'Notify-on-waiting should now be false');
+
+        assertEqual(mgr.getNotifyOnError(), true, 'Default notify-on-error should be true');
+        assertEqual(mgr.setNotifyOnError(false), true, 'Setting notify-on-error false should succeed');
+        assertEqual(mgr.getNotifyOnError(), false, 'Notify-on-error should now be false');
+
+        print('✓ Notification settings setters and getters verified.');
+    }
+    testNotificationSettingsToggles();
 
     print('\nAll indicator GJS tests passed successfully!');
 } catch (e) {

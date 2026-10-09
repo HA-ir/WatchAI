@@ -526,18 +526,60 @@ async fn run_daemon() -> Result<(), Box<dyn std::error::Error>> {
                     // Success, Error, Cancelled, or Unknown but is NOT permanently terminated (process alive),
                     // smoothly settle it to Idle after COMPLETION_DWELL_SECONDS elapses.
                     for mut s in bg_registry.list().await {
-                        if !s.is_terminated
-                            && (s.current_state == LifecycleState::Success
+                        if !s.is_terminated {
+                            if (s.current_state == LifecycleState::Success
                                 || s.current_state == LifecycleState::Error
                                 || s.current_state == LifecycleState::Cancelled
                                 || s.current_state == LifecycleState::Unknown)
-                            && (now - s.state_entered_at).num_seconds()
-                                >= watchai_core::aggregate::COMPLETION_DWELL_SECONDS
-                            && s.transition_to(LifecycleState::Idle, s.sequence_number + 1, None).is_ok()
-                        {
-                            bg_registry.upsert(s.clone()).await;
-                            let dto = SessionDto::from(&s);
-                            let _ = WatchAiDbusService::emit_session_updated(bg_iface.signal_context(), &dto).await;
+                                && (now - s.state_entered_at).num_seconds()
+                                    >= watchai_core::aggregate::COMPLETION_DWELL_SECONDS
+                                && s.transition_to(LifecycleState::Idle, s.sequence_number + 1, None).is_ok()
+                            {
+                                bg_registry.upsert(s.clone()).await;
+                                let dto = SessionDto::from(&s);
+                                let _ = WatchAiDbusService::emit_session_updated(bg_iface.signal_context(), &dto).await;
+
+                                if let Some(agg_dto) = sync_aggregate_state(&bg_registry, &bg_agg, now).await {
+                                    let _ = WatchAiDbusService::emit_aggregate_state_changed(
+                                        bg_iface.signal_context(),
+                                        &agg_dto.state,
+                                        agg_dto.active_session_count,
+                                        agg_dto.waiting_session_count,
+                                        agg_dto.error_session_count,
+                                        &agg_dto.updated_at,
+                                    ).await;
+                                }
+                            }
+
+                            // Proactive Claude Code session reconciliation:
+                            // If an active Claude session is currently recorded as Working, check ~/.claude/sessions/<pid>.json
+                            // to detect if its prompt finished and it transitioned to idle.
+                            if s.provider_id == "claude-code" && s.current_state == LifecycleState::Working {
+                                if let Some(pid) = s.process_id {
+                                    if let Some((target_state, tool)) =
+                                        watchai_adapters::claude_code::read_claude_session_status(pid, now)
+                                    {
+                                        if target_state != LifecycleState::Working
+                                            && s.transition_to(target_state, s.sequence_number + 1, tool).is_ok()
+                                        {
+                                            bg_registry.upsert(s.clone()).await;
+                                            let dto = SessionDto::from(&s);
+                                            let _ = WatchAiDbusService::emit_session_updated(bg_iface.signal_context(), &dto).await;
+
+                                            if let Some(agg_dto) = sync_aggregate_state(&bg_registry, &bg_agg, now).await {
+                                                let _ = WatchAiDbusService::emit_aggregate_state_changed(
+                                                    bg_iface.signal_context(),
+                                                    &agg_dto.state,
+                                                    agg_dto.active_session_count,
+                                                    agg_dto.waiting_session_count,
+                                                    agg_dto.error_session_count,
+                                                    &agg_dto.updated_at,
+                                                ).await;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
 

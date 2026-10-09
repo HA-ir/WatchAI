@@ -60,6 +60,7 @@ if command -v gnome-extensions >/dev/null 2>&1; then
         --extra-source=indicator.js \
         --extra-source=notifications.js \
         --extra-source=popover.js \
+        --extra-source=prefs.js \
         --extra-source=settings.js \
         --extra-source=utils.js
 
@@ -89,6 +90,7 @@ files_to_pack = [
     ('indicator.js', 'indicator.js'),
     ('notifications.js', 'notifications.js'),
     ('popover.js', 'popover.js'),
+    ('prefs.js', 'prefs.js'),
     ('settings.js', 'settings.js'),
     ('utils.js', 'utils.js'),
     ('schemas/org.gnome.shell.extensions.watchai.gschema.xml', 'schemas/org.gnome.shell.extensions.watchai.gschema.xml'),

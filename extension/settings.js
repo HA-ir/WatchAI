@@ -167,6 +167,16 @@ export class SettingsManager {
         }
     }
 
+    setEnableNotifications(enabled) {
+        try {
+            this._settings.set_boolean('enable-desktop-notifications', Boolean(enabled));
+            return true;
+        } catch (e) {
+            console.warn('WatchAI: Failed to set enable-desktop-notifications:', e);
+            return false;
+        }
+    }
+
     getNotifyOnWaiting() {
         try {
             return this._settings.get_boolean('notify-on-waiting');
@@ -175,11 +185,31 @@ export class SettingsManager {
         }
     }
 
+    setNotifyOnWaiting(enabled) {
+        try {
+            this._settings.set_boolean('notify-on-waiting', Boolean(enabled));
+            return true;
+        } catch (e) {
+            console.warn('WatchAI: Failed to set notify-on-waiting:', e);
+            return false;
+        }
+    }
+
     getNotifyOnError() {
         try {
             return this._settings.get_boolean('notify-on-error');
         } catch {
             return true;
+        }
+    }
+
+    setNotifyOnError(enabled) {
+        try {
+            this._settings.set_boolean('notify-on-error', Boolean(enabled));
+            return true;
+        } catch (e) {
+            console.warn('WatchAI: Failed to set notify-on-error:', e);
+            return false;
         }
     }
 
